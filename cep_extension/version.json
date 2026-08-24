@@ -1,13 +1,13 @@
 {
-    "version":  "2.1.0",
+    "version":  "2.1.1",
     "notes":  [
-                  "Bản này kiểm chứng việc nạp lại script mà không cần khởi động lại Premiere",
-                  "Nếu cập nhật xong báo \u0027Không cần khởi động lại Premiere\u0027 thì đã chạy đúng"
+                  "Bỏ chỉ thị #target trong hostscript.jsx - nguyên nhân khiến script không nạp lại được",
+                  "Nếu vẫn phải khởi động lại Premiere, hộp thoại sẽ kèm dòng chẩn đoán"
               ],
     "files":  [
                   {
                       "path":  "index.html",
-                      "sha256":  "9cb5a8ad74ddfd233cb7a600298bcc9e54101b729c5a7961ea95170e7fcdf01b"
+                      "sha256":  "fb4c1c1dc5a82918e8fe51c67d002aaa339e6183f47e258461d8301dedd0b262"
                   },
                   {
                       "path":  "css/style.css",
@@ -19,15 +19,15 @@
                   },
                   {
                       "path":  "js/updater.js",
-                      "sha256":  "3e3ea366c1c75fb9dbb7fc908e9a69a4d8f72a920ae2caf76ccfdef7a94d76ac"
+                      "sha256":  "697258c2a2ef81e83797266d363d45e9bc49fd3c4b65cb2d8d2e8f30e3641b52"
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "381001ac4ed5fbcc8efc110b5bcc75b7e50a0190ed5cce608ddb3433f5bae74d"
+                      "sha256":  "5477dfed2c86684a9ca966a5a9e275ff083c1ea27bd3610ad36d68ca61d0c7b2"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "1b99745db44c96886634105a53c587624927e7a8d49af28d9f007c2f3322f8ac"
+                      "sha256":  "771fa9ddde3ba0dc05a9c388dad3b7ef3c7485428fe5acd7036d132431a3ecee"
                   },
                   {
                       "path":  "sound/done.mp3",

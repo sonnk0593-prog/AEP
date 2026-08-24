@@ -320,13 +320,24 @@ var Updater = (function () {
             // Nạp lại xong thì ĐỌC NGAY số phiên bản của script vừa nạp, và nếu
             // hỏng thì trả về NGUYÊN VĂN lỗi. Trước đây chỉ trả về "err" nên khi
             // nạp thất bại không có cách nào biết vì sao.
+            // Đo phiên bản TRƯỚC và SAU khi nạp. Chỉ đọc mỗi giá trị sau là không đủ:
+            // $.evalFile có thể chạy trót lọt mà vẫn không đổi được gì trong ngữ cảnh
+            // của panel — lúc đó before và after bằng nhau, không hề có ngoại lệ nào.
             var script =
-                '(function(){ try { $.evalFile(new File(' + JSON.stringify(jsx) + ')); ' +
-                'return (typeof IMPORTCUT_VERSION !== "undefined") ? IMPORTCUT_VERSION : "(khong thay IMPORTCUT_VERSION)"; } ' +
-                'catch(e) { return "ERR: " + e.toString(); } })()';
+                '(function(){' +
+                ' var b = (typeof IMPORTCUT_VERSION !== "undefined") ? IMPORTCUT_VERSION : "(chua co)";' +
+                ' try {' +
+                '  var r = $.evalFile(new File(' + JSON.stringify(jsx) + '));' +
+                '  var a = (typeof IMPORTCUT_VERSION !== "undefined") ? IMPORTCUT_VERSION : "(chua co)";' +
+                '  return "OK|" + a + "|truoc=" + b + " sau=" + a + " tra-ve=" + r;' +
+                ' } catch(e) { return "ERR||" + e.toString(); }' +
+                '})()';
             csInterface.evalScript(script, function (r) {
-                var got = String(r === undefined || r === null ? "" : r).replace(/^"|"$/g, "");
-                resolve({ ok: got === expectVersion, detail: got });
+                var raw = String(r === undefined || r === null ? "" : r).replace(/^"|"$/g, "");
+                var parts = raw.split("|");
+                var after = (parts.length > 1) ? parts[1] : "";
+                var detail = (parts.length > 2) ? parts.slice(2).join("|") : raw;
+                resolve({ ok: after === expectVersion, detail: detail });
             });
         });
     }

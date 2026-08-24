@@ -3,7 +3,13 @@
     Auto Import & Cut V2
 */
 
-#target premierepro
+// KHONG dat "#target premierepro" o day.
+// CEP da tu nap file nay vao dung Premiere qua the <ScriptPath> trong manifest,
+// nen dong do la thua. Tai hai hon: khi panel goi $.evalFile() de nap lai script
+// sau khi cap nhat, chi thi #target khien ExtendScript chuyen file sang chay o
+// mot ngu canh KHAC (engine chinh cua Premiere) thay vi ngu canh cua panel.
+// Ket qua: khong bao loi gi, nhung bien trong panel van la ban cu -> lan nao
+// cung phai khoi dong lai Premiere.
 
 // ============================================================================
 // PHIEN BAN - phai KHOP voi APP_VERSION trong js/app.js
@@ -15,7 +21,7 @@
 // ghi de ham cua panel nap truoc. Panel doi chieu bien nay de biet script dang
 // chay co dung cua no khong.
 // ============================================================================
-var IMPORTCUT_VERSION = "2.1.0";
+var IMPORTCUT_VERSION = "2.1.1";
 
 var TICKS_PER_SECOND = 254016000000;
 var MEDIA_TYPE = 4;

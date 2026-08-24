@@ -10,7 +10,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "2.1.0";
+var APP_VERSION = "2.1.1";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -847,10 +847,15 @@ function reportUpdateResult() {
                     "Panel và script trong Premiere đều đang chạy bản <strong>" + escapeHtml(APP_VERSION) +
                     "</strong>.<br><br>Không cần khởi động lại Premiere, dùng tiếp được ngay.", "success");
             } else {
+                // Kèm luôn chẩn đoán vào hộp thoại: nhật ký dễ bị bỏ qua, mà đây
+                // là thông tin duy nhất truy được vì sao nạp lại script thất bại.
+                var diag = hostMsg
+                    ? '<br><br><span style="opacity:.75;font-size:10.5px">Chẩn đoán: ' + escapeHtml(hostMsg) + "</span>"
+                    : "";
                 showAlert("Đã cập nhật phiên bản mới",
                     "Panel đã lên bản <strong>" + escapeHtml(APP_VERSION) + "</strong>, nhưng script bên trong Premiere " +
                     "vẫn là bản <strong>" + escapeHtml(loaded || "cũ") + "</strong>.<br><br>" +
-                    "<strong>Hãy khởi động lại Premiere Pro</strong> để dùng được đầy đủ bản mới.", "warning");
+                    "<strong>Hãy khởi động lại Premiere Pro</strong> để dùng được đầy đủ bản mới." + diag, "warning");
             }
         }
     );
