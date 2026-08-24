@@ -14,10 +14,10 @@ var Updater = (function () {
     // =====================================================================
     // CẤU HÌNH - chỉ cần sửa 4 dòng này
     // =====================================================================
-    var REPO_OWNER  = "";              // vd: "thaolee1605"
-    var REPO_NAME   = "";              // vd: "auto-import-cut"
-    var REPO_BRANCH = "main";          // tên nhánh (main hoặc master)
-    var REPO_BASE   = "cep_extension"; // thư mục chứa panel trong kho; để "" nếu ở gốc
+    var REPO_OWNER  = "sonnk0593-prog"; // https://github.com/sonnk0593-prog/AEP
+    var REPO_NAME   = "AEP";
+    var REPO_BRANCH = "main";           // nhánh mặc định của kho
+    var REPO_BASE   = "cep_extension";  // thư mục chứa panel trong kho; để "" nếu ở gốc
     // =====================================================================
 
     // KHÔNG BAO GIỜ cập nhật manifest qua OTA:

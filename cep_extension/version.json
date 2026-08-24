@@ -1,9 +1,7 @@
 {
-    "version":  "2.0.0",
+    "version":  "2.0.1",
     "notes":  [
-                  "Sửa mốc \u0027hết\u0027: đọc đúng thời lượng video thay vì cắt 5 giây",
-                  "Sửa nút Thu gọn tab kiểm tra media",
-                  "Thêm cập nhật tự động từ GitHub"
+                  "Bản thử cập nhật tự động - nội dung giống hệt 2.0.0"
               ],
     "files":  [
                   {
@@ -20,15 +18,15 @@
                   },
                   {
                       "path":  "js/updater.js",
-                      "sha256":  "fca1511ed12669765f83b7bc6dd094c060e814ea4b334ac4e0a940f7fdf07eeb"
+                      "sha256":  "5b075430c0384e155073153482d116281dcb43403380a2557b5bd781683893b1"
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "3e5948fbe7a38a7dfc70c3ab72cd5aedbf7e98806df1f12f2a32bd1cc7a1cd65"
+                      "sha256":  "4a20a55a0603c4311ab406ab1cb4a48deecf0624b04e6deb26f1813291e542be"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "05d760ba76275a00849eaa0174caadbd9694b36c5879efda9f58728ae5bf643c"
+                      "sha256":  "7571c60e0af4ced9007a5471087a2164c02baefb2843c957a33ef6604a51f58c"
                   },
                   {
                       "path":  "sound/done.mp3",
