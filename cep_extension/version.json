@@ -1,13 +1,13 @@
 {
-    "version":  "2.0.9",
+    "version":  "2.1.0",
     "notes":  [
-                  "Sửa nút Mở thư mục XML mở nhầm sang Documents",
-                  "Nạp lại script không cần khởi động lại Premiere (sửa lỗi mã hoá file .jsx)"
+                  "Bản này kiểm chứng việc nạp lại script mà không cần khởi động lại Premiere",
+                  "Nếu cập nhật xong báo \u0027Không cần khởi động lại Premiere\u0027 thì đã chạy đúng"
               ],
     "files":  [
                   {
                       "path":  "index.html",
-                      "sha256":  "51e5d075ff923118cbedc1f4d603c713511049c0ded5edf4438714b4ed5b9b74"
+                      "sha256":  "9cb5a8ad74ddfd233cb7a600298bcc9e54101b729c5a7961ea95170e7fcdf01b"
                   },
                   {
                       "path":  "css/style.css",
@@ -23,11 +23,11 @@
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "794f4b216dc73b0908e81694a6a276d895ee36e9a6bc790afcab1072282e0960"
+                      "sha256":  "381001ac4ed5fbcc8efc110b5bcc75b7e50a0190ed5cce608ddb3433f5bae74d"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "8ce52caa19f7d9ade50c64af9b40823c0ce5651a1a8f913079daf1c5a1974b4b"
+                      "sha256":  "1b99745db44c96886634105a53c587624927e7a8d49af28d9f007c2f3322f8ac"
                   },
                   {
                       "path":  "sound/done.mp3",
