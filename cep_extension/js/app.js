@@ -10,7 +10,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "2.0.1";
+var APP_VERSION = "2.0.2";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }

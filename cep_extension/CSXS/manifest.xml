@@ -30,12 +30,19 @@
                 <Resources>
                     <MainPath>./index.html</MainPath>
                     <ScriptPath>./jsx/hostscript.jsx</ScriptPath>
-                    <CEPEngine>
-                        <CommandLine>
-                            <Parameter>--enable-nodejs</Parameter>
-                            <Parameter>--mixed-context</Parameter>
-                        </CommandLine>
-                    </CEPEngine>
+                    <!--
+                        Ten the PHAI la CEFCommandLine.
+                        Truoc day ghi nham thanh CEPEngine + CommandLine: CEP gap the la
+                        thi bo qua im lang, khong bao loi, nen co enable-nodejs khong bao
+                        gio co tac dung va require() luon that bai trong panel.
+                        CANH BAO: tuyet doi khong go hai dau gach ngang lien nhau vao
+                        trong comment cua XML. Do la ky tu ket thuc comment, manifest se
+                        hong va Premiere lang le khong nap panel nua.
+                    -->
+                    <CEFCommandLine>
+                        <Parameter>--enable-nodejs</Parameter>
+                        <Parameter>--mixed-context</Parameter>
+                    </CEFCommandLine>
                 </Resources>
                 <Lifecycle>
                     <AutoVisible>true</AutoVisible>

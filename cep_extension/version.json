@@ -1,12 +1,13 @@
 {
-    "version":  "2.0.1",
+    "version":  "2.0.2",
     "notes":  [
-                  "Bản thử cập nhật tự động - nội dung giống hệt 2.0.0"
+                  "Bản thử cập nhật tự động",
+                  "Nếu bạn thấy dòng có dấu ✅ trong changelog, OTA đã ghi đè file thành công"
               ],
     "files":  [
                   {
                       "path":  "index.html",
-                      "sha256":  "9ee15b89b4a6148c4f35eee2b291e7b88ab37b0be26e327b4fd2365b1e8bdd90"
+                      "sha256":  "92e11340885997cf5433e18c692c50c526a51f80adb74de7af71be19cedd58c7"
                   },
                   {
                       "path":  "css/style.css",
@@ -18,15 +19,15 @@
                   },
                   {
                       "path":  "js/updater.js",
-                      "sha256":  "5b075430c0384e155073153482d116281dcb43403380a2557b5bd781683893b1"
+                      "sha256":  "c7e54704e43e328b2d95a589da6ccd0730ff4bee6cf5df74a21a5c51faa8dede"
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "4a20a55a0603c4311ab406ab1cb4a48deecf0624b04e6deb26f1813291e542be"
+                      "sha256":  "1e0c62151193763c2cf98cd794e5f68201fc79018234ff563b2991d15be40164"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "7571c60e0af4ced9007a5471087a2164c02baefb2843c957a33ef6604a51f58c"
+                      "sha256":  "2618fa2432422df8704644e9521e714cf1622d2b2396ab9df0536d2ab50145c0"
                   },
                   {
                       "path":  "sound/done.mp3",

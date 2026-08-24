@@ -8,6 +8,13 @@
  *      trường hợp mất mạng giữa chừng làm panel hỏng không mở lại được.
  *   4. Sao lưu file cũ vào _backup/ trước khi ghi đè.
  *   5. Nạp lại hostscript.jsx rồi reload panel.
+ *
+ * CỐ Ý KHÔNG phụ thuộc vào Node.js:
+ *   - require() chỉ chạy khi manifest bật --enable-nodejs ĐÚNG cách, mà việc đó
+ *     lại cần khởi động lại Premiere mới có tác dụng.
+ *   - window.cep.fs thì CEP luôn cấp sẵn, không cần cờ gì.
+ *   Vì vậy mọi thao tác file đều có 2 đường: Node.js (nhanh hơn) hoặc cep.fs.
+ *   SHA-256 cũng tự cài bằng JS thuần thay vì dùng require("crypto").
  */
 var Updater = (function () {
 
@@ -25,18 +32,140 @@ var Updater = (function () {
     // - Manifest hỏng = Premiere không nạp được panel = không còn gì để tự sửa.
     var NEVER_UPDATE = { "CSXS/manifest.xml": 1 };
 
-    var fs = null, pathMod = null, cryptoMod = null;
-    try {
-        fs = require("fs");
-        pathMod = require("path");
-        cryptoMod = require("crypto");
-    } catch (e) { fs = null; }
+    // ---------------------------------------------------------------------
+    // Lớp truy cập file: Node.js nếu có, không thì dùng cep.fs
+    // ---------------------------------------------------------------------
+    var nodeFs = null;
+    try { nodeFs = require("fs"); } catch (e) { nodeFs = null; }
 
+    function cepFs() {
+        try { return (window.cep && window.cep.fs) ? window.cep.fs : null; } catch (e) { return null; }
+    }
+    function b64Enc() {
+        try { if (window.cep && window.cep.encoding && window.cep.encoding.Base64) return window.cep.encoding.Base64; } catch (e) {}
+        return "Base64";
+    }
+    function hasFileAccess() { return !!nodeFs || !!cepFs(); }
+
+    function normPath(p) { return String(p).replace(/\\/g, "/").replace(/\/+$/, ""); }
+    function joinPath(a, b) { return normPath(a) + "/" + String(b).replace(/^\/+/, ""); }
+    function dirOf(p) {
+        var s = normPath(p), i = s.lastIndexOf("/");
+        return i <= 0 ? s : s.substring(0, i);
+    }
+
+    function fileExists(p) {
+        if (nodeFs) { try { return nodeFs.existsSync(p); } catch (e) {} }
+        var c = cepFs();
+        if (c && c.stat) { try { var r = c.stat(p); return !!(r && r.err === 0); } catch (e2) {} }
+        return false;
+    }
+
+    function mkdirp(dir) {
+        var d = normPath(dir);
+        if (d === "" || fileExists(d)) return;
+        var parent = dirOf(d);
+        if (parent !== d) mkdirp(parent);
+        if (nodeFs) { try { nodeFs.mkdirSync(d); return; } catch (e) {} }
+        var c = cepFs();
+        if (c && c.makedir) { try { c.makedir(d); } catch (e2) {} }
+    }
+
+    /** Đọc file ra chuỗi Base64 (dùng chung cho cả file chữ lẫn file nhị phân). */
+    function readBase64(p) {
+        if (nodeFs) { try { return nodeFs.readFileSync(p).toString("base64"); } catch (e) {} }
+        var c = cepFs();
+        if (c && c.readFile) { try { var r = c.readFile(p, b64Enc()); if (r && r.err === 0) return r.data; } catch (e2) {} }
+        return null;
+    }
+
+    function writeBase64(p, b64) {
+        if (nodeFs) {
+            try { nodeFs.writeFileSync(p, Buffer.from(b64, "base64")); return true; } catch (e) {}
+        }
+        var c = cepFs();
+        if (c && c.writeFile) { try { var r = c.writeFile(p, b64, b64Enc()); return !!(r && r.err === 0); } catch (e2) {} }
+        return false;
+    }
+
+    function bytesToBase64(bytes) {
+        var bin = "", chunk = 0x8000;
+        for (var i = 0; i < bytes.length; i += chunk) {
+            var slice = bytes.subarray ? bytes.subarray(i, i + chunk) : bytes.slice(i, i + chunk);
+            bin += String.fromCharCode.apply(null, slice);
+        }
+        return btoa(bin);
+    }
+
+    // ---------------------------------------------------------------------
+    // SHA-256 thuần JS - không dùng require("crypto") nên luôn chạy được.
+    // Nhận vào mảng byte (Uint8Array hoặc Array thường), trả về chuỗi hex.
+    // ---------------------------------------------------------------------
+    var SHA_K = [
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+    ];
+
+    function sha256Hex(bytes) {
+        var len = bytes.length, i, t;
+
+        // Đệm: 0x80, các byte 0, rồi 8 byte độ dài tính bằng bit (big-endian).
+        var msg = [];
+        for (i = 0; i < len; i++) msg.push(bytes[i] & 0xff);
+        msg.push(0x80);
+        while (msg.length % 64 !== 56) msg.push(0);
+        var bitHi = Math.floor(len / 536870912);   // len * 8 / 2^32
+        var bitLo = (len * 8) >>> 0;
+        msg.push((bitHi >>> 24) & 0xff, (bitHi >>> 16) & 0xff, (bitHi >>> 8) & 0xff, bitHi & 0xff);
+        msg.push((bitLo >>> 24) & 0xff, (bitLo >>> 16) & 0xff, (bitLo >>> 8) & 0xff, bitLo & 0xff);
+
+        var H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+        var W = new Array(64);
+
+        for (var off = 0; off < msg.length; off += 64) {
+            for (t = 0; t < 16; t++) {
+                W[t] = ((msg[off + t*4] << 24) | (msg[off + t*4 + 1] << 16) |
+                        (msg[off + t*4 + 2] << 8) | msg[off + t*4 + 3]) >>> 0;
+            }
+            for (t = 16; t < 64; t++) {
+                var w15 = W[t-15], w2 = W[t-2];
+                var s0 = ((w15 >>> 7) | (w15 << 25)) ^ ((w15 >>> 18) | (w15 << 14)) ^ (w15 >>> 3);
+                var s1 = ((w2 >>> 17) | (w2 << 15)) ^ ((w2 >>> 19) | (w2 << 13)) ^ (w2 >>> 10);
+                W[t] = (W[t-16] + s0 + W[t-7] + s1) >>> 0;
+            }
+            var a=H[0], b=H[1], c=H[2], d=H[3], e=H[4], f=H[5], g=H[6], h=H[7];
+            for (t = 0; t < 64; t++) {
+                var S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+                var ch = (e & f) ^ ((~e) & g);
+                var t1 = (h + S1 + ch + SHA_K[t] + W[t]) >>> 0;
+                var S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+                var maj = (a & b) ^ (a & c) ^ (b & c);
+                var t2 = (S0 + maj) >>> 0;
+                h = g; g = f; f = e; e = (d + t1) >>> 0;
+                d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+            }
+            H[0]=(H[0]+a)>>>0; H[1]=(H[1]+b)>>>0; H[2]=(H[2]+c)>>>0; H[3]=(H[3]+d)>>>0;
+            H[4]=(H[4]+e)>>>0; H[5]=(H[5]+f)>>>0; H[6]=(H[6]+g)>>>0; H[7]=(H[7]+h)>>>0;
+        }
+
+        var hex = "", digits = "0123456789abcdef";
+        for (i = 0; i < 8; i++) {
+            for (var j = 7; j >= 0; j--) hex += digits.charAt((H[i] >>> (j*4)) & 0xf);
+        }
+        return hex;
+    }
+
+    // ---------------------------------------------------------------------
     function configured() { return REPO_OWNER !== "" && REPO_NAME !== ""; }
-    function usable() { return !!(fs && pathMod && cryptoMod) && configured(); }
 
     function extensionDir() {
-        try { return csInterface.getSystemPath(SystemPath.EXTENSION); } catch (e) { return ""; }
+        try { return normPath(csInterface.getSystemPath(SystemPath.EXTENSION)); } catch (e) { return ""; }
     }
 
     /** raw.githubusercontent phục vụ qua CDN có cache ~5 phút -> thêm tham số phá cache. */
@@ -64,18 +193,12 @@ var Updater = (function () {
         return s;
     }
 
-    function ensureDir(dir) {
-        if (fs.existsSync(dir)) return;
-        ensureDir(pathMod.dirname(dir));
-        try { fs.mkdirSync(dir); } catch (e) {}
-    }
-
     // ---------------------------------------------------------------------
     // Bước 1: hỏi kho xem có bản mới không
     // ---------------------------------------------------------------------
     function check() {
         if (!configured()) return Promise.reject(new Error("Chưa cấu hình kho cập nhật trong updater.js"));
-        if (!usable()) return Promise.reject(new Error("Panel không truy cập được hệ thống file (thiếu quyền Node.js)"));
+        if (!hasFileAccess()) return Promise.reject(new Error("Panel không ghi được file (cep.fs lẫn Node.js đều không dùng được)"));
 
         return fetch(rawUrl("version.json"), { cache: "no-store" }).then(function (r) {
             if (r.status === 404) {
@@ -110,14 +233,14 @@ var Updater = (function () {
                 if (!r.ok) throw new Error(f.path + ": tải lỗi " + r.status);
                 return r.arrayBuffer();
             }).then(function (buf) {
-                var data = Buffer.from(new Uint8Array(buf));
+                var bytes = new Uint8Array(buf);
                 if (f.sha256) {
-                    var got = cryptoMod.createHash("sha256").update(data).digest("hex");
+                    var got = sha256Hex(bytes);
                     if (got !== String(f.sha256).toLowerCase()) {
-                        throw new Error(f.path + ": file tải về không khớp mã kiểm tra (tải lại sau ít phút)");
+                        throw new Error(f.path + ": file tải về không khớp mã kiểm tra (thử lại sau ít phút)");
                     }
                 }
-                return { path: f.path, data: data };
+                return { path: f.path, b64: bytesToBase64(bytes) };
             });
         }));
     }
@@ -128,21 +251,24 @@ var Updater = (function () {
     function apply(files) {
         var dir = extensionDir();
         if (!dir) throw new Error("Không xác định được thư mục cài đặt panel");
-        var backupDir = pathMod.join(dir, "_backup");
+        var backupDir = joinPath(dir, "_backup");
+        var i, live, dst, cur;
 
-        var i, live, dst;
         for (i = 0; i < files.length; i++) {
-            live = pathMod.join(dir, files[i].path);
-            if (fs.existsSync(live)) {
-                dst = pathMod.join(backupDir, files[i].path);
-                ensureDir(pathMod.dirname(dst));
-                fs.writeFileSync(dst, fs.readFileSync(live));
-            }
+            live = joinPath(dir, files[i].path);
+            if (!fileExists(live)) continue;
+            cur = readBase64(live);
+            if (cur === null) continue;
+            dst = joinPath(backupDir, files[i].path);
+            mkdirp(dirOf(dst));
+            writeBase64(dst, cur);
         }
         for (i = 0; i < files.length; i++) {
-            live = pathMod.join(dir, files[i].path);
-            ensureDir(pathMod.dirname(live));
-            fs.writeFileSync(live, files[i].data);
+            live = joinPath(dir, files[i].path);
+            mkdirp(dirOf(live));
+            if (!writeBase64(live, files[i].b64)) {
+                throw new Error("Không ghi được " + files[i].path + " (bản cũ nằm ở _backup)");
+            }
         }
         return backupDir;
     }
@@ -153,7 +279,7 @@ var Updater = (function () {
      */
     function reloadHostScript() {
         return new Promise(function (resolve) {
-            var jsx = extensionDir().replace(/\\/g, "/") + "/jsx/hostscript.jsx";
+            var jsx = extensionDir() + "/jsx/hostscript.jsx";
             csInterface.evalScript(
                 '(function(){ try { $.evalFile(new File("' + jsx + '")); return "ok"; } catch(e) { return "err"; } })()',
                 function () { resolve(); }
@@ -171,9 +297,12 @@ var Updater = (function () {
 
     return {
         isConfigured: configured,
+        hasFileAccess: hasFileAccess,
+        usingNode: function () { return !!nodeFs; },
         check: check,
         install: install,
         compareVersion: compareVersion,
-        repoLabel: function () { return REPO_OWNER + "/" + REPO_NAME + " (" + REPO_BRANCH + ")"; }
+        repoLabel: function () { return REPO_OWNER + "/" + REPO_NAME + " (" + REPO_BRANCH + ")"; },
+        __sha256Hex: sha256Hex   // để kiểm thử
     };
 })();
