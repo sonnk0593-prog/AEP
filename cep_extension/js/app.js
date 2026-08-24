@@ -10,7 +10,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "2.1.1";
+var APP_VERSION = "2.1.2";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -752,7 +752,13 @@ window.addEventListener("DOMContentLoaded", function () {
     setInterval(checkPremiereEnvironment, 5000);
 
     // Vừa cập nhật xong ở lần chạy trước? Báo kết quả ngay, trước mọi thứ khác.
-    reportUpdateResult();
+    // (reportUpdateResult tự gọi syncHostScript trong trường hợp đó.)
+    if (!reportUpdateResult()) {
+        // Mở panel bình thường: vẫn kiểm tra script trong Premiere có đúng bản không.
+        // Cần thiết vì CEP tiêm lại bản script cũ mỗi lần panel nạp lại trang, nên
+        // script có thể bị tụt lại kể cả khi không có cập nhật nào vừa diễn ra.
+        syncHostScript(function () {});
+    }
 
     // Kiểm tra cập nhật lúc mở panel - lùi vài giây để không giành mạng/CPU
     // với phần dựng giao diện và lần kiểm tra môi trường Premiere đầu tiên.
@@ -811,54 +817,67 @@ var LS_UPDATE_HOSTMSG = "autoimportcut_v2_update_hostmsg";  // lý do nạp lạ
  * Chạy ngay khi mở panel: nếu lần trước vừa cập nhật thì báo kết quả.
  * Đối chiếu với APP_VERSION đang chạy thật, không tin suông vào cờ đã lưu -
  * nhờ vậy bắt được cả trường hợp file đã ghi nhưng panel vẫn nạp code cũ.
+ * Trả về true nếu vừa có cập nhật (và đã tự lo phần đồng bộ script).
  */
 function reportUpdateResult() {
-    var flag = null, hostMsg = "";
+    var flag = null;
     try {
         flag = localStorage.getItem(LS_UPDATED_TO);
-        hostMsg = localStorage.getItem(LS_UPDATE_HOSTMSG) || "";
-    } catch (e) { return; }
-    if (!flag) return;
+    } catch (e) { return false; }
+    if (!flag) return false;
     try {
         localStorage.removeItem(LS_UPDATED_TO);
         localStorage.removeItem(LS_UPDATE_HOSTMSG);
     } catch (e2) {}
-    if (hostMsg) addLog("warning", "Nạp lại script trong Premiere không thành công — " + hostMsg);
 
     if (flag !== APP_VERSION) {
         showAlert("Cập nhật chưa có hiệu lực",
             "Đã tải bản <strong>" + escapeHtml(flag) + "</strong> nhưng panel vẫn đang chạy bản <strong>" +
             escapeHtml(APP_VERSION) + "</strong>.<br><br>Đóng panel rồi mở lại (Window › Extensions).", "warning");
-        return;
+        return true;
     }
 
     addLog("success", "Đã cập nhật lên phiên bản " + APP_VERSION);
-
-    // Panel đã lên bản mới. Nhưng script chạy trong Premiere là thứ RIÊNG BIỆT
-    // (Premiere giữ nó trong bộ máy ExtendServer dùng chung). Hỏi thẳng nó đang ở
-    // bản nào rồi mới kết luận, thay vì đoán - có nạp lại được thì không cần
-    // khởi động lại Premiere, không thì phải nói rõ cho người dùng biết.
-    csInterface.evalScript(
-        "(function(){ try { return (typeof IMPORTCUT_VERSION !== 'undefined') ? IMPORTCUT_VERSION : ''; } catch(e) { return ''; } })()",
-        function (b) {
-            var loaded = String(b === undefined || b === null ? "" : b).replace(/^"|"$/g, "");
-            if (loaded === APP_VERSION) {
-                showAlert("Đã cập nhật phiên bản mới",
-                    "Panel và script trong Premiere đều đang chạy bản <strong>" + escapeHtml(APP_VERSION) +
-                    "</strong>.<br><br>Không cần khởi động lại Premiere, dùng tiếp được ngay.", "success");
-            } else {
-                // Kèm luôn chẩn đoán vào hộp thoại: nhật ký dễ bị bỏ qua, mà đây
-                // là thông tin duy nhất truy được vì sao nạp lại script thất bại.
-                var diag = hostMsg
-                    ? '<br><br><span style="opacity:.75;font-size:10.5px">Chẩn đoán: ' + escapeHtml(hostMsg) + "</span>"
-                    : "";
-                showAlert("Đã cập nhật phiên bản mới",
-                    "Panel đã lên bản <strong>" + escapeHtml(APP_VERSION) + "</strong>, nhưng script bên trong Premiere " +
-                    "vẫn là bản <strong>" + escapeHtml(loaded || "cũ") + "</strong>.<br><br>" +
-                    "<strong>Hãy khởi động lại Premiere Pro</strong> để dùng được đầy đủ bản mới." + diag, "warning");
-            }
+    syncHostScript(function (ok, loaded, detail) {
+        if (ok) {
+            showAlert("Đã cập nhật phiên bản mới",
+                "Panel và script trong Premiere đều đang chạy bản <strong>" + escapeHtml(APP_VERSION) +
+                "</strong>.<br><br>Không cần khởi động lại Premiere, dùng tiếp được ngay.", "success");
+        } else {
+            var diag = detail
+                ? '<br><br><span style="opacity:.75;font-size:10.5px">Chẩn đoán: ' + escapeHtml(detail) + "</span>"
+                : "";
+            showAlert("Đã cập nhật phiên bản mới",
+                "Panel đã lên bản <strong>" + escapeHtml(APP_VERSION) + "</strong>, nhưng script bên trong Premiere " +
+                "vẫn là bản <strong>" + escapeHtml(loaded || "cũ") + "</strong>.<br><br>" +
+                "<strong>Hãy khởi động lại Premiere Pro</strong> để dùng được đầy đủ bản mới." + diag, "warning");
         }
-    );
+    });
+    return true;
+}
+
+/**
+ * Bảo đảm script chạy trong Premiere đúng bằng phiên bản panel — nạp lại nếu lệch.
+ *
+ * PHẢI làm ở đây, lúc panel vừa mở, chứ KHÔNG phải ngay sau khi ghi file cập nhật:
+ * CEP giữ sẵn một bản script từ lúc Premiere khởi động và tự tiêm lại mỗi khi panel
+ * nạp lại trang, đè mất bản ta vừa nạp. Nạp trước reload nên luôn công cốc.
+ * Gọi ở đây thì không còn lần nạp lại nào phía sau để đè lên nữa.
+ */
+function syncHostScript(cb) {
+    var probe = "(function(){ try { return (typeof IMPORTCUT_VERSION !== 'undefined') ? IMPORTCUT_VERSION : ''; } catch(e) { return ''; } })()";
+    csInterface.evalScript(probe, function (b) {
+        var loaded = String(b === undefined || b === null ? "" : b).replace(/^"|"$/g, "");
+        if (loaded === APP_VERSION) { cb(true, loaded, ""); return; }
+        if (typeof Updater === "undefined" || !Updater.reloadHost) { cb(false, loaded, "khong co Updater.reloadHost"); return; }
+
+        addLog("info", "Script trong Premiere là bản " + (loaded || "?") + ", đang nạp lại bản " + APP_VERSION + "…");
+        Updater.reloadHost(APP_VERSION).then(function (r) {
+            if (r.ok) addLog("success", "Đã nạp lại script trong Premiere: bản " + APP_VERSION);
+            else addLog("warning", "Nạp lại script thất bại — " + (r.detail || ""));
+            cb(r.ok, r.after || loaded, r.detail || "");
+        });
+    });
 }
 
 /**

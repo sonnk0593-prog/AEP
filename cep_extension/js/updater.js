@@ -337,7 +337,7 @@ var Updater = (function () {
                 var parts = raw.split("|");
                 var after = (parts.length > 1) ? parts[1] : "";
                 var detail = (parts.length > 2) ? parts.slice(2).join("|") : raw;
-                resolve({ ok: after === expectVersion, detail: detail });
+                resolve({ ok: after === expectVersion, after: after, detail: detail });
             });
         });
     }
@@ -363,6 +363,7 @@ var Updater = (function () {
         usingNode: function () { return !!nodeFs; },
         check: check,
         install: install,
+        reloadHost: reloadHostScript,
         compareVersion: compareVersion,
         repoLabel: function () { return REPO_OWNER + "/" + REPO_NAME + " (" + REPO_BRANCH + ")"; },
         __sha256Hex: sha256Hex   // để kiểm thử

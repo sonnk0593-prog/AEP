@@ -1,8 +1,7 @@
 {
-    "version":  "2.1.1",
+    "version":  "2.1.2",
     "notes":  [
-                  "Bỏ chỉ thị #target trong hostscript.jsx - nguyên nhân khiến script không nạp lại được",
-                  "Nếu vẫn phải khởi động lại Premiere, hộp thoại sẽ kèm dòng chẩn đoán"
+                  "Nạp lại script ngay khi mở panel thay vì trước lúc panel nạp lại - CEP tiêm đè bản cũ nên cách cũ luôn công cốc"
               ],
     "files":  [
                   {
@@ -19,15 +18,15 @@
                   },
                   {
                       "path":  "js/updater.js",
-                      "sha256":  "697258c2a2ef81e83797266d363d45e9bc49fd3c4b65cb2d8d2e8f30e3641b52"
+                      "sha256":  "a8305eb52332de2357ab9329166a7c1833fef17d85027d6d6ef41d1273b314d6"
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "5477dfed2c86684a9ca966a5a9e275ff083c1ea27bd3610ad36d68ca61d0c7b2"
+                      "sha256":  "ba01e9407a38151151492dee6ae902f4ab0efc679f62af283b8f3027cbab5765"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "771fa9ddde3ba0dc05a9c388dad3b7ef3c7485428fe5acd7036d132431a3ecee"
+                      "sha256":  "9f5371d7fcd81e30a622e1dafb45676998f963952d5da34cbbe8c3d1ee82abf0"
                   },
                   {
                       "path":  "sound/done.mp3",
