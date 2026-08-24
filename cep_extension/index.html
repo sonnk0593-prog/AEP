@@ -142,6 +142,10 @@
             <button id="btnExportXml" class="btn-mini" title="Xuất project đang mở ra file XML, đặt cùng thư mục và cùng tên với project">
                 <span>📄 Xuất XML</span>
             </button>
+            <!-- Chỉ hiện sau khi xuất XML thành công; nội dung do app.js dựng lại -->
+            <button id="btnOpenXmlDir" class="btn-mini" style="display: none;">
+                <span>📂 Mở thư mục XML</span>
+            </button>
         </div>
 
         <!-- Progress Card -->
@@ -258,6 +262,7 @@
                 <button id="btnChangelogClose" class="btn-ai-modal-close" title="Đóng">✕</button>
             </div>
             <div class="changelog-list">
+                <div>- Xuất XML xong: nút hiện dấu ✓ và có thêm nút "Mở thư mục XML"</div>
                 <div>- Thêm nút "Xuất XML": xuất project ra file XML cùng thư mục, cùng tên</div>
                 <div>- Bắt buộc cập nhật khi có phiên bản mới, không có tuỳ chọn bỏ qua</div>
                 <div>- Báo "Đã cập nhật phiên bản mới" sau khi cập nhật xong</div>

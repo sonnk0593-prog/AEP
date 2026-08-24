@@ -10,7 +10,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "2.0.5";
+var APP_VERSION = "2.0.6";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -69,6 +69,7 @@ var state = {
     isRunning: false,
     shouldCancel: false,
     currentRowIdx: 0,
+    lastXmlPath: "",   // đường dẫn XML vừa xuất; rỗng = chưa xuất lần nào phiên này
     aiClipNames: {},   // rowNumber -> AI-generated name
     stats: {
         total: 0,
@@ -383,6 +384,7 @@ var dom = {
     btnCheckUpdate: document.getElementById("btnCheckUpdate"),
     updateStatus: document.getElementById("updateStatus"),
     btnExportXml: document.getElementById("btnExportXml"),
+    btnOpenXmlDir: document.getElementById("btnOpenXmlDir"),
     mediaCheckPanel: document.getElementById("mediaCheckPanel")
     ,mediaCheckSummary: document.getElementById("mediaCheckSummary")
     ,mediaCheckList: document.getElementById("mediaCheckList")
@@ -935,6 +937,7 @@ function setupEventListeners() {
     dom.btnCancel.addEventListener("click", cancelImportProcess);
     if (dom.btnCopyRelink) dom.btnCopyRelink.addEventListener("click", copyAndRelinkFootage);
     if (dom.btnExportXml) dom.btnExportXml.addEventListener("click", function () { exportProjectXml(false); });
+    if (dom.btnOpenXmlDir) dom.btnOpenXmlDir.addEventListener("click", openXmlFolder);
     if (dom.toastClose) dom.toastClose.addEventListener("click", hideToast);
     if (dom.mediaCheckClose) dom.mediaCheckClose.addEventListener("click", toggleMediaCheck);
     if (dom.mediaCheckStart) dom.mediaCheckStart.addEventListener("click", function () {
@@ -1782,6 +1785,37 @@ function evalJson(script, cb) {
 // XUẤT XML
 // =========================================================================
 /**
+ * Dựng lại cả hai nút XML từ một nguồn duy nhất là state.lastXmlPath.
+ * Gom vào một chỗ để nút "Mở thư mục XML" không bao giờ hiện khi chưa có file,
+ * và dấu tích không bị mất mỗi lần bật/tắt trạng thái nút.
+ */
+function renderXmlButtons(busy) {
+    var btn = dom.btnExportXml, open = dom.btnOpenXmlDir;
+    var done = !!state.lastXmlPath;
+
+    if (btn) {
+        btn.disabled = !!busy;
+        if (busy) {
+            btn.className = "btn-mini";
+            btn.innerHTML = "<span>⏳ Đang xuất…</span>";
+        } else if (done) {
+            btn.className = "btn-mini is-done";
+            btn.innerHTML = '<span>📄 Xuất XML</span><span class="btn-mini-check">✓</span>';
+            btn.title = "Đã xuất: " + state.lastXmlPath + "\nBấm để xuất lại";
+        } else {
+            btn.className = "btn-mini";
+            btn.innerHTML = "<span>📄 Xuất XML</span>";
+            btn.title = "Xuất project đang mở ra file XML, đặt cùng thư mục và cùng tên với project";
+        }
+    }
+    if (open) {
+        open.style.display = (done && !busy) ? "inline-flex" : "none";
+        open.disabled = !!busy;
+        if (done) open.title = "Mở Explorer và chọn sẵn: " + state.lastXmlPath;
+    }
+}
+
+/**
  * Xuất project đang mở ra file XML cùng thư mục, cùng tên với project.
  * force = true khi người dùng đã đồng ý ghi đè file XML có sẵn.
  */
@@ -1792,18 +1826,16 @@ function exportProjectXml(force) {
     }
     ensureOwnScript(function (own) {
         if (!own) return;
-
-        var btn = dom.btnExportXml;
-        if (btn) { btn.disabled = true; btn.textContent = "⏳ Đang xuất…"; }
-        var restore = function () {
-            if (btn) { btn.disabled = false; btn.innerHTML = "<span>📄 Xuất XML</span>"; }
-        };
+        renderXmlButtons(true);
 
         evalJson("cep_exportProjectXml(" + (force ? 1 : 0) + ")", function (res, err) {
-            restore();
-            if (err) { showAlert("Xuất XML thất bại", escapeHtml(err), "error"); return; }
-
+            if (err) {
+                renderXmlButtons(false);
+                showAlert("Xuất XML thất bại", escapeHtml(err), "error");
+                return;
+            }
             if (res.needConfirm) {
+                renderXmlButtons(false);
                 showConfirm("File XML đã tồn tại",
                     "Đã có file này:<br><strong>" + escapeHtml(res.path) + "</strong><br><br>Ghi đè lên nó?",
                     "Ghi đè",
@@ -1811,15 +1843,33 @@ function exportProjectXml(force) {
                 return;
             }
             if (!res.success) {
+                renderXmlButtons(false);
                 showAlert("Xuất XML thất bại", escapeHtml(res.error || "Không rõ nguyên nhân").replace(/\n/g, "<br>"), "error");
                 addLog("error", "Xuất XML thất bại: " + (res.error || ""));
                 return;
             }
 
+            state.lastXmlPath = res.path;
+            renderXmlButtons(false);
             var kb = Math.max(1, Math.round((res.size || 0) / 1024));
             addLog("success", "Đã xuất XML: " + res.path + " (" + kb + " KB)");
             showToast("Đã xuất XML", res.path);
         });
+    });
+}
+
+/** Mở Explorer và chọn sẵn file XML vừa xuất. */
+function openXmlFolder() {
+    if (!state.lastXmlPath) return;
+    evalJson("cep_revealInExplorer(" + toEscapedJson(state.lastXmlPath) + ")", function (res, err) {
+        if (err) { showAlert("Không mở được thư mục", escapeHtml(err), "error"); return; }
+        if (!res.success) {
+            // File có thể đã bị xoá/di chuyển sau khi xuất -> trả nút về trạng thái ban đầu.
+            state.lastXmlPath = "";
+            renderXmlButtons(false);
+            showAlert("Không mở được thư mục",
+                escapeHtml(res.error || "Không rõ nguyên nhân").replace(/\n/g, "<br>"), "warning");
+        }
     });
 }
 

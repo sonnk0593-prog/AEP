@@ -884,6 +884,7 @@ body {
 .btn-row-mini {
     display: flex;
     justify-content: center;
+    gap: 8px;
     padding-top: 8px;
 }
 
@@ -916,6 +917,26 @@ body {
 .btn-mini:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+}
+
+/* Trạng thái đã xuất XML thành công: viền/nền ngả xanh lá + dấu tích bên phải */
+.btn-mini.is-done {
+    background: rgba(16, 185, 129, 0.14);
+    border-color: rgba(52, 211, 153, 0.5);
+    color: #a7f3d0;
+}
+
+.btn-mini.is-done:hover:not(:disabled) {
+    background: rgba(16, 185, 129, 0.24);
+    border-color: rgba(52, 211, 153, 0.75);
+    color: #d1fae5;
+}
+
+.btn-mini-check {
+    color: #34d399;
+    font-weight: 800;
+    font-size: 12.5px;
+    line-height: 1;
 }
 
 .relink-icon {

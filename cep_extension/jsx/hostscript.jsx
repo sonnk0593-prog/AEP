@@ -15,7 +15,7 @@
 // ghi de ham cua panel nap truoc. Panel doi chieu bien nay de biet script dang
 // chay co dung cua no khong.
 // ============================================================================
-var IMPORTCUT_VERSION = "2.0.5";
+var IMPORTCUT_VERSION = "2.0.6";
 
 var TICKS_PER_SECOND = 254016000000;
 var MEDIA_TYPE = 4;
@@ -1144,6 +1144,29 @@ function cep_exportProjectXml(forceOverwrite) {
         }
     } catch (e) {
         res.error = "L\u1ed7i xu\u1ea5t XML: " + e.toString();
+    }
+    return toJson(res);
+}
+
+/**
+ * Mo Windows Explorer va CHON SAN file duoc chi dinh (khong chi mo thu muc).
+ * Duong dan do chinh panel gui lai tu ket qua xuat XML, khong phai nguoi dung go.
+ */
+function cep_revealInExplorer(path) {
+    var res = { success: false };
+    try {
+        if (!path || trim(path) === "") { res.error = "Thiếu đường dẫn."; return toJson(res); }
+        var f = new File(path);
+        if (!f.exists) {
+            res.error = "Không còn thấy file:\n" + path + "\n(có thể đã bị di chuyển hoặc xoá)";
+            return toJson(res);
+        }
+        // explorer.exe doi dau gach nguoc; cu phap /select, phai dinh lien dau phay.
+        var win = f.fsName.replace(/\//g, "\\");
+        app.system('explorer.exe /select,"' + win + '"');
+        res.success = true;
+    } catch (e) {
+        res.error = "Không mở được thư mục: " + e.toString();
     }
     return toJson(res);
 }

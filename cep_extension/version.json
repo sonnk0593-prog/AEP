@@ -1,16 +1,16 @@
 {
-    "version":  "2.0.5",
+    "version":  "2.0.6",
     "notes":  [
-                  "Thêm nút Xuất XML: xuất project ra file XML cùng thư mục, cùng tên với project"
+                  "Xuất XML xong: nút hiện dấu tích xanh và có thêm nút Mở thư mục XML"
               ],
     "files":  [
                   {
                       "path":  "index.html",
-                      "sha256":  "dbefc3e7ddbabdf8a672d3742f19f69f0f1db8d1a7cb910b2bffb4c2b30040f6"
+                      "sha256":  "1932d87ed3ce46a975c1a80933baa50d8162500fd77f4d8582eba1a885a74529"
                   },
                   {
                       "path":  "css/style.css",
-                      "sha256":  "e33335e690d4cb70fdb4e6fd86247757f04c22f99f73ffde4ecb3d1171847fc2"
+                      "sha256":  "066df767b9fd0ebc92f0508533862336930fb803fcb694261388e21c52c1b5ef"
                   },
                   {
                       "path":  "js/CSInterface.js",
@@ -22,11 +22,11 @@
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "ee30509521495c5ad144a6c1111533bffc859f96e0d6d409c9597d9cb648556e"
+                      "sha256":  "7fce7b7a036c8b57138081a2f5e4e2697ad707e7cec862afb3eab5bd0538508f"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "d766d622cfca06b087048ffb3cb160741f2fc23b9f2fdf41ac6ec57a7bc01b82"
+                      "sha256":  "c234e05989fa7dd62af1df362a2f74349aeabf33af71dc4d3b6993247c33f665"
                   },
                   {
                       "path":  "sound/done.mp3",
