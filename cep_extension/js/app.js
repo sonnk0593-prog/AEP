@@ -10,7 +10,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "2.0.7";
+var APP_VERSION = "2.0.8";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -817,15 +817,35 @@ function reportUpdateResult() {
     if (!flag) return;
     try { localStorage.removeItem(LS_UPDATED_TO); } catch (e2) {}
 
-    if (flag === APP_VERSION) {
-        addLog("success", "Đã cập nhật lên phiên bản " + APP_VERSION);
-        showAlert("Đã cập nhật phiên bản mới",
-            "Panel đang chạy bản <strong>" + escapeHtml(APP_VERSION) + "</strong>.", "success");
-    } else {
+    if (flag !== APP_VERSION) {
         showAlert("Cập nhật chưa có hiệu lực",
             "Đã tải bản <strong>" + escapeHtml(flag) + "</strong> nhưng panel vẫn đang chạy bản <strong>" +
             escapeHtml(APP_VERSION) + "</strong>.<br><br>Đóng panel rồi mở lại (Window › Extensions).", "warning");
+        return;
     }
+
+    addLog("success", "Đã cập nhật lên phiên bản " + APP_VERSION);
+
+    // Panel đã lên bản mới. Nhưng script chạy trong Premiere là thứ RIÊNG BIỆT
+    // (Premiere giữ nó trong bộ máy ExtendServer dùng chung). Hỏi thẳng nó đang ở
+    // bản nào rồi mới kết luận, thay vì đoán - có nạp lại được thì không cần
+    // khởi động lại Premiere, không thì phải nói rõ cho người dùng biết.
+    csInterface.evalScript(
+        "(function(){ try { return (typeof IMPORTCUT_VERSION !== 'undefined') ? IMPORTCUT_VERSION : ''; } catch(e) { return ''; } })()",
+        function (b) {
+            var loaded = String(b === undefined || b === null ? "" : b).replace(/^"|"$/g, "");
+            if (loaded === APP_VERSION) {
+                showAlert("Đã cập nhật phiên bản mới",
+                    "Panel và script trong Premiere đều đang chạy bản <strong>" + escapeHtml(APP_VERSION) +
+                    "</strong>.<br><br>Không cần khởi động lại Premiere, dùng tiếp được ngay.", "success");
+            } else {
+                showAlert("Đã cập nhật phiên bản mới",
+                    "Panel đã lên bản <strong>" + escapeHtml(APP_VERSION) + "</strong>, nhưng script bên trong Premiere " +
+                    "vẫn là bản <strong>" + escapeHtml(loaded || "cũ") + "</strong>.<br><br>" +
+                    "<strong>Hãy khởi động lại Premiere Pro</strong> để dùng được đầy đủ bản mới.", "warning");
+            }
+        }
+    );
 }
 
 /**

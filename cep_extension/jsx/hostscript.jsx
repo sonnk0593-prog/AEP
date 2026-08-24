@@ -15,7 +15,7 @@
 // ghi de ham cua panel nap truoc. Panel doi chieu bien nay de biet script dang
 // chay co dung cua no khong.
 // ============================================================================
-var IMPORTCUT_VERSION = "2.0.7";
+var IMPORTCUT_VERSION = "2.0.8";
 
 var TICKS_PER_SECOND = 254016000000;
 var MEDIA_TYPE = 4;
@@ -497,30 +497,132 @@ function getExtensionFromUrl(url) {
     return "jpg";
 }
 
+/**
+ * Chay mot doan PowerShell roi CHO den khi no xong.
+ * Premiere KHONG co app.system() cung nhu system.callSystem(), nen cach duy nhat
+ * la ghi file .ps1 + .bat roi File.execute(), va cho script tu bao xong bang mot
+ * file co. Script luon ghi file co ke ca khi loi -> khong bao gio treo het gio.
+ */
+function runPowerShellAndWait(psBody, timeoutMs) {
+    var stamp = String(new Date().getTime()) + "_" + String(Math.floor(Math.random() * 100000));
+    var tmp = Folder.temp.fsName;
+    var ps1Path  = tmp + "/autoimportcut_v2_run_" + stamp + ".ps1";
+    var batPath  = tmp + "/autoimportcut_v2_run_" + stamp + ".bat";
+    var flagPath = tmp + "/autoimportcut_v2_run_" + stamp + ".done";
+
+    var flagQ = "'" + flagPath.replace(/'/g, "''") + "'";
+    var ps = [
+        "$ErrorActionPreference = 'SilentlyContinue'",
+        "try {",
+        psBody,
+        "} catch {}",
+        '"DONE" | Out-File -LiteralPath ' + flagQ + " -Encoding ascii",
+        ""
+    ].join("\r\n");
+
+    var bat = [
+        "@echo off",
+        "chcp 65001 >nul",
+        'powershell -NoProfile -ExecutionPolicy Bypass -File "' + ps1Path.replace(/\//g, "\\") + '"',
+        "exit",
+        ""
+    ].join("\r\n");
+
+    var ok = false;
+    try {
+        if (writeTextFile(ps1Path, ps, true) && writeTextFile(batPath, bat, false)) {
+            var launched = false;
+            try { launched = new File(batPath).execute(); } catch (eX) { launched = false; }
+            if (launched) {
+                var waited = 0, step = 150;
+                while (waited < timeoutMs) {
+                    if (new File(flagPath).exists) { ok = true; break; }
+                    $.sleep(step);
+                    waited += step;
+                }
+            }
+        }
+    } catch (eRun) { ok = false; }
+
+    try { new File(ps1Path).remove(); } catch (e1) {}
+    try { new File(batPath).remove(); } catch (e2) {}
+    try { new File(flagPath).remove(); } catch (e3) {}
+    return ok;
+}
+
 function downloadFileFromUrl(url, destPath) {
     try {
         url = trim(url); if (url === "") return null;
         var destFile = new File(destPath);
         if (!destFile.parent.exists) destFile.parent.create();
         if (destFile.exists && destFile.length > 0) return destFile;
-        var cleanPath = destPath.replace(/\//g, "\\");
-        app.system('C:\\Windows\\System32\\curl.exe -L -k -s -A "Mozilla/5.0" -o "' + cleanPath + '" "' + url + '"');
-        var c1 = new File(destPath); if (c1.exists && c1.length > 0) return c1;
-        app.system('powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $ProgressPreference = \'SilentlyContinue\'; (New-Object Net.WebClient).DownloadFile(\'' + url.replace(/'/g,"''") + '\', \'' + cleanPath.replace(/'/g,"''") + '\')"');
-        var c2 = new File(destPath); if (c2.exists && c2.length > 0) return c2;
-        return null;
+
+        function q(s) { return "'" + String(s).replace(/'/g, "''") + "'"; }
+        var ps = [
+            "  $u = " + q(url),
+            "  $o = " + q(destPath.replace(/\//g, "\\")),
+            "  $curl = Join-Path $env:SystemRoot 'System32\\curl.exe'",
+            "  if (Test-Path -LiteralPath $curl) { & $curl -L -k -s -A 'Mozilla/5.0' -o $o $u }",
+            // Du phong khi may khong co curl hoac curl that bai
+            "  if (-not (Test-Path -LiteralPath $o) -or (Get-Item -LiteralPath $o).Length -eq 0) {",
+            "    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12",
+            "    $ProgressPreference = 'SilentlyContinue'",
+            "    (New-Object Net.WebClient).DownloadFile($u, $o)",
+            "  }"
+        ].join("\r\n");
+
+        runPowerShellAndWait(ps, 600000);
+        var c = new File(destPath);
+        return (c.exists && c.length > 0) ? c : null;
     } catch(e) { return null; }
 }
 
-function getOrCreateBlackVideoItem(footageFolder) {
-    var folderPath = footageFolder ? footageFolder.fsName : (app.project.path ? new File(app.project.path).parent.fsName : Folder.temp.fsName);
-    var blackPath = folderPath + "/Black_Video.png";
-    var blackFile = new File(blackPath);
-    if (!blackFile.exists || blackFile.length === 0) {
-        var b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
-        app.system('powershell -NoProfile -Command "[IO.File]::WriteAllBytes(\'' + blackPath.replace(/\//g,"\\") + '\', [Convert]::FromBase64String(\'' + b64 + '\'))"');
+// ---- Ghi file nhi phan bang chinh ExtendScript (khong can PowerShell) ----
+var B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+function base64ToBinaryString(b64) {
+    b64 = String(b64).replace(/[^A-Za-z0-9+\/=]/g, "");
+    var out = "", i = 0;
+    while (i < b64.length) {
+        var e1 = B64_CHARS.indexOf(b64.charAt(i++));
+        var e2 = B64_CHARS.indexOf(b64.charAt(i++));
+        var e3 = B64_CHARS.indexOf(b64.charAt(i++));   // -1 neu la dau '=' (dem)
+        var e4 = B64_CHARS.indexOf(b64.charAt(i++));
+        if (e1 < 0 || e2 < 0) break;
+        out += String.fromCharCode((e1 << 2) | (e2 >> 4));
+        if (e3 >= 0) out += String.fromCharCode(((e2 & 15) << 4) | (e3 >> 2));
+        if (e4 >= 0) out += String.fromCharCode(((e3 & 3) << 6) | e4);
     }
-    return importAndGetProjectItem(blackPath);
+    return out;
+}
+
+function writeBinaryFile(path, binStr) {
+    try {
+        var f = new File(path);
+        if (!f.parent.exists) f.parent.create();
+        f.encoding = "BINARY";
+        if (!f.open("w")) return false;
+        f.write(binStr);
+        f.close();
+        var chk = new File(path);
+        return chk.exists && chk.length > 0;
+    } catch (e) { return false; }
+}
+
+function getOrCreateBlackVideoItem(footageFolder) {
+    try {
+        var folderPath = footageFolder ? footageFolder.fsName : (app.project.path ? new File(app.project.path).parent.fsName : Folder.temp.fsName);
+        var blackPath = folderPath + "/Black_Video.png";
+        var blackFile = new File(blackPath);
+        if (!blackFile.exists || blackFile.length === 0) {
+            // Truoc day goi app.system('powershell ... WriteAllBytes') -> Premiere khong co
+            // app.system() nen dong nao co link YouTube/Envato deu lam hong ca dong.
+            // ExtendScript ghi thang duoc file nhi phan, khong can goi lenh he thong.
+            var b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+            if (!writeBinaryFile(blackPath, base64ToBinaryString(b64))) return null;
+        }
+        return importAndGetProjectItem(blackPath);
+    } catch (e) { return null; }
 }
 
 // ---- Timecode Helpers ----
@@ -1733,8 +1835,10 @@ function fileSizeOf(f) {
 }
 
 /**
- * Chay 1 lenh he thong.
- * LUU Y: Premiere Pro KHONG co system.callSystem() (do la API cua After Effects) -> phai dung app.system().
+ * Chay 1 lenh he thong - CHI dung de THAM DO, khong dua vao ket qua.
+ * LUU Y: Premiere Pro khong co system.callSystem() (API cua After Effects) VA
+ * cung khong co app.system() -> tren Premiere ham nay luon tra ve ok:false.
+ * Can chay lenh that su thi dung runPowerShellAndWait().
  */
 function runShell(cmd) {
     try {

@@ -314,21 +314,29 @@ var Updater = (function () {
      * Nạp lại hostscript.jsx. Bắt buộc phải làm riêng: reload panel chỉ nạp lại
      * HTML/CSS/JS, còn bản .jsx cũ vẫn nằm trong bộ máy ExtendScript của Premiere.
      */
-    function reloadHostScript() {
+    function reloadHostScript(expectVersion) {
         return new Promise(function (resolve) {
             var jsx = extensionDir() + "/jsx/hostscript.jsx";
-            csInterface.evalScript(
-                '(function(){ try { $.evalFile(new File("' + jsx + '")); return "ok"; } catch(e) { return "err"; } })()',
-                function () { resolve(); }
-            );
+            // Nạp lại xong thì ĐỌC NGAY số phiên bản của script vừa nạp. Trước đây
+            // chỉ gọi rồi mặc định coi là xong, nên khi nạp hỏng cũng không ai biết.
+            var script =
+                '(function(){ try { $.evalFile(new File(' + JSON.stringify(jsx) + ')); ' +
+                'return (typeof IMPORTCUT_VERSION !== "undefined") ? IMPORTCUT_VERSION : ""; } ' +
+                'catch(e) { return "ERR"; } })()';
+            csInterface.evalScript(script, function (r) {
+                var got = String(r === undefined || r === null ? "" : r).replace(/^"|"$/g, "");
+                resolve(got === expectVersion);
+            });
         });
     }
 
-    /** Chạy trọn gói: tải -> ghi đè -> nạp lại. */
+    /** Chạy trọn gói: tải -> ghi đè -> nạp lại script trong Premiere. */
     function install(info) {
         return download(info).then(function (files) {
             var backupDir = apply(files);
-            return reloadHostScript().then(function () { return { count: files.length, backupDir: backupDir }; });
+            return reloadHostScript(info.version).then(function (hostReloaded) {
+                return { count: files.length, backupDir: backupDir, hostReloaded: hostReloaded };
+            });
         });
     }
 

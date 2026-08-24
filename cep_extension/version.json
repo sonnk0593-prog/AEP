@@ -1,12 +1,13 @@
 {
-    "version":  "2.0.7",
+    "version":  "2.0.8",
     "notes":  [
-                  "Sửa lỗi nút Mở thư mục XML báo \u0027app.system is not a function\u0027"
+                  "Sửa lỗi dòng có link YouTube/Envato làm hỏng cả dòng (app.system không tồn tại trong Premiere)",
+                  "Cập nhật xong báo rõ có cần khởi động lại Premiere hay không"
               ],
     "files":  [
                   {
                       "path":  "index.html",
-                      "sha256":  "1932d87ed3ce46a975c1a80933baa50d8162500fd77f4d8582eba1a885a74529"
+                      "sha256":  "599e8978efbd2bec743897dbe07c4a739cbad217f69470e2e95b130bc3e4efd3"
                   },
                   {
                       "path":  "css/style.css",
@@ -18,15 +19,15 @@
                   },
                   {
                       "path":  "js/updater.js",
-                      "sha256":  "b437082f3d66808c31f53609a53533ee7a345e40b248cd142f13e4c5476c2d21"
+                      "sha256":  "ef0d8a50a21ba5450adce1ffc95156e1507d994a65bd0738bef7244dba3d8b3a"
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "5c13cfa67d2c164cb6b3ebacd71d82ffad7f34fa63f63354abd8deffb755fb74"
+                      "sha256":  "29fa3d2a6b4846f60f68d3db532f8965be494b7971a7a2d6d78d6a46e0339e0c"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "3279d541cb365326a4e86424e9ab004d88eb2dda88bac00c02dfd35b8766632c"
+                      "sha256":  "e29d92a962e7bd1fb3de4172e569581e9aacd19220d6c35378f20049a2e23532"
                   },
                   {
                       "path":  "sound/done.mp3",
