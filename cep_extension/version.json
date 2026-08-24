@@ -1,13 +1,13 @@
 {
-    "version":  "2.0.3",
+    "version":  "2.0.4",
     "notes":  [
-                  "Sửa lỗi không ghi được file khi cập nhật (đường dẫn dính tiền tố file:///)",
-                  "Báo lỗi cập nhật chính xác hơn: kèm đường dẫn thật và trạng thái Node.js/cep.fs"
+                  "Bắt buộc cập nhật khi có phiên bản mới",
+                  "Báo \u0027Đã cập nhật phiên bản mới\u0027 sau khi cập nhật xong"
               ],
     "files":  [
                   {
                       "path":  "index.html",
-                      "sha256":  "0e1931572d2504040509e07984e0f3d7e81281b57580c4c937e834e3a05acce8"
+                      "sha256":  "b013f7fd4fefed4324cc4573403a0eb2208b0b155b792edb5da1a38540a7f730"
                   },
                   {
                       "path":  "css/style.css",
@@ -23,11 +23,11 @@
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "522d4a2b65cc4754d538c1876ee3bb124b2977ed2dacd4427f10312f7a86174d"
+                      "sha256":  "d4bcc216c5a3e491e177e63428858b22982a29cad390d41eeee91f81e5a622ab"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "cd00ef706784acb9ea83b7f9f8e07d5bebdea7dd21cd9799019f1699713e0bb6"
+                      "sha256":  "466e49039cbb5ede355caaa67e48b7980aada867bb5e0019d6dc3c81a87d0a4a"
                   },
                   {
                       "path":  "sound/done.mp3",

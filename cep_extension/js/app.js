@@ -10,7 +10,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "2.0.3";
+var APP_VERSION = "2.0.4";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -598,6 +598,7 @@ function hideCopyProgress() {
 // =========================================================================
 
 var _dlgCallback = null;
+var _dlgMandatory = false;   // true = hộp thoại không cho tắt, buộc bấm nút chính
 
 var DLG_ICONS = { info: "ℹ️", error: "❌", warning: "⚠️", success: "✅", question: "📂" };
 
@@ -631,12 +632,19 @@ function showDialog(opts) {
         }
     }
 
+    // Hộp thoại bắt buộc: giấu luôn nút X. ESC và click ra ngoài bị chặn
+    // trong closeDialog() - mọi đường thoát đều gọi closeDialog(false).
+    _dlgMandatory = !!opts.mandatory;
+    if (dom.dlgClose) dom.dlgClose.style.display = _dlgMandatory ? "none" : "";
+
     _dlgCallback = opts.onResult || null;
     dom.dlgOverlay.classList.add("visible");
     if (dom.dlgOk) dom.dlgOk.focus();
 }
 
 function closeDialog(result) {
+    if (_dlgMandatory && !result) return;   // bắt buộc: không có đường bỏ qua
+    _dlgMandatory = false;
     if (dom.dlgOverlay) dom.dlgOverlay.classList.remove("visible");
     var cb = _dlgCallback;
     _dlgCallback = null;
@@ -740,6 +748,9 @@ window.addEventListener("DOMContentLoaded", function () {
     updateLogVisibility();
     setInterval(checkPremiereEnvironment, 5000);
 
+    // Vừa cập nhật xong ở lần chạy trước? Báo kết quả ngay, trước mọi thứ khác.
+    reportUpdateResult();
+
     // Kiểm tra cập nhật lúc mở panel - lùi vài giây để không giành mạng/CPU
     // với phần dựng giao diện và lần kiểm tra môi trường Premiere đầu tiên.
     setTimeout(function () { runUpdateCheck(false); }, 4000);
@@ -789,6 +800,31 @@ function setUpdateStatus(text, isError) {
     dom.updateStatus.className = "update-status" + (isError ? " update-status-error" : "");
 }
 
+// Ghi lại phiên bản vừa cập nhật, để sau khi panel nạp lại thì biết mà báo kết quả.
+var LS_UPDATED_TO = "autoimportcut_v2_updated_to";
+
+/**
+ * Chạy ngay khi mở panel: nếu lần trước vừa cập nhật thì báo kết quả.
+ * Đối chiếu với APP_VERSION đang chạy thật, không tin suông vào cờ đã lưu -
+ * nhờ vậy bắt được cả trường hợp file đã ghi nhưng panel vẫn nạp code cũ.
+ */
+function reportUpdateResult() {
+    var flag = null;
+    try { flag = localStorage.getItem(LS_UPDATED_TO); } catch (e) { return; }
+    if (!flag) return;
+    try { localStorage.removeItem(LS_UPDATED_TO); } catch (e2) {}
+
+    if (flag === APP_VERSION) {
+        addLog("success", "Đã cập nhật lên phiên bản " + APP_VERSION);
+        showAlert("Đã cập nhật phiên bản mới",
+            "Panel đang chạy bản <strong>" + escapeHtml(APP_VERSION) + "</strong>.", "success");
+    } else {
+        showAlert("Cập nhật chưa có hiệu lực",
+            "Đã tải bản <strong>" + escapeHtml(flag) + "</strong> nhưng panel vẫn đang chạy bản <strong>" +
+            escapeHtml(APP_VERSION) + "</strong>.<br><br>Đóng panel rồi mở lại (Window › Extensions).", "warning");
+    }
+}
+
 /**
  * manual = true  -> người dùng tự bấm: báo mọi kết quả, kể cả "đã mới nhất".
  * manual = false -> tự chạy lúc mở panel: im lặng, chỉ lên tiếng khi có bản mới.
@@ -808,20 +844,46 @@ function runUpdateCheck(manual) {
             return;
         }
         setUpdateStatus("Có bản mới: " + info.version);
-        var notes = (info.notes && info.notes.length)
-            ? "<br><br>" + info.notes.map(function (n) { return "• " + escapeHtml(n); }).join("<br>")
-            : "";
-        showConfirm("Có bản cập nhật " + info.version,
-            "Bạn đang dùng bản <strong>" + escapeHtml(APP_VERSION) + "</strong>." + notes +
-            "<br><br>Panel sẽ tải về và tự khởi động lại. Đừng cập nhật khi đang cắt dở.",
-            "Cập nhật ngay",
-            function (ok) { if (ok) doInstallUpdate(info); });
+        promptMandatoryUpdate(info);
     }).catch(function (err) {
         if (dom.btnCheckUpdate) dom.btnCheckUpdate.disabled = false;
         var msg = (err && err.message) ? err.message : String(err);
         setUpdateStatus(msg, true);
         if (manual) showAlert("Không kiểm tra được cập nhật", escapeHtml(msg), "warning");
         else addLog("warning", "Không kiểm tra được cập nhật: " + msg);
+    });
+}
+
+/**
+ * Hộp thoại bắt buộc cập nhật - chỉ một nút, không có đường bỏ qua.
+ * Ngoại lệ DUY NHẤT: đang cắt dở thì hoãn lại. Ép cập nhật giữa chừng sẽ
+ * nạp lại panel và làm hỏng công việc đang chạy.
+ */
+function promptMandatoryUpdate(info) {
+    if (state.isRunning) {
+        addLog("info", "Có bản mới " + info.version + ", sẽ nhắc sau khi cắt xong.");
+        setTimeout(function () { promptMandatoryUpdate(info); }, 20000);
+        return;
+    }
+    if (isDialogOpen()) {   // đang có hộp thoại khác, đợi rồi nhắc lại
+        setTimeout(function () { promptMandatoryUpdate(info); }, 3000);
+        return;
+    }
+
+    var notes = (info.notes && info.notes.length)
+        ? "<br><br>" + info.notes.map(function (n) { return "• " + escapeHtml(n); }).join("<br>")
+        : "";
+    showDialog({
+        title: "Có phiên bản mới, cần cập nhật",
+        message: "Bản mới: <strong>" + escapeHtml(info.version) + "</strong> — bạn đang dùng <strong>" +
+                 escapeHtml(APP_VERSION) + "</strong>." + notes +
+                 "<br><br>Panel sẽ tải về và tự khởi động lại.",
+        type: "warning",
+        icon: "⬆️",
+        okLabel: "Cập nhật ngay",
+        cancelLabel: null,
+        mandatory: true,
+        onResult: function () { doInstallUpdate(info); }
     });
 }
 
@@ -832,15 +894,24 @@ function doInstallUpdate(info) {
     Updater.install(info).then(function (res) {
         addLog("success", "Đã cập nhật lên bản " + info.version + " (" + res.count + " file). Bản cũ lưu ở _backup.");
         setUpdateStatus("Xong, đang khởi động lại…");
-        // Chờ một nhịp cho log/thông báo kịp hiện rồi mới nạp lại panel.
+        // Đánh dấu trước khi nạp lại: sau khi reload, code mới sẽ đọc cờ này để báo kết quả.
+        try { localStorage.setItem(LS_UPDATED_TO, info.version); } catch (e) {}
         setTimeout(function () { location.reload(); }, 900);
     }).catch(function (err) {
         if (dom.btnCheckUpdate) dom.btnCheckUpdate.disabled = false;
         var msg = (err && err.message) ? err.message : String(err);
         setUpdateStatus(msg, true);
-        // Tải/kiểm tra lỗi thì chưa file nào bị ghi đè -> panel vẫn nguyên vẹn.
-        showAlert("Cập nhật không thành công",
-            escapeHtml(msg) + "<br><br>Panel vẫn giữ nguyên bản cũ, bạn dùng tiếp bình thường.", "warning");
+        // Cố ý KHÔNG bắt buộc ở đây: nếu mạng hỏng hoặc kho lỗi mà vẫn ép,
+        // người dùng sẽ kẹt vĩnh viễn không dùng được panel. Lần mở sau vẫn nhắc lại.
+        showDialog({
+            title: "Cập nhật không thành công",
+            message: escapeHtml(msg).replace(/\n/g, "<br>") +
+                     "<br><br>Panel vẫn giữ nguyên bản cũ và dùng được bình thường.",
+            type: "warning",
+            okLabel: "Thử lại",
+            cancelLabel: "Để sau",
+            onResult: function (retry) { if (retry) doInstallUpdate(info); }
+        });
     });
 }
 
