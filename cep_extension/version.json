@@ -1,17 +1,16 @@
 {
-    "version":  "2.0.4",
+    "version":  "2.0.5",
     "notes":  [
-                  "Bắt buộc cập nhật khi có phiên bản mới",
-                  "Báo \u0027Đã cập nhật phiên bản mới\u0027 sau khi cập nhật xong"
+                  "Thêm nút Xuất XML: xuất project ra file XML cùng thư mục, cùng tên với project"
               ],
     "files":  [
                   {
                       "path":  "index.html",
-                      "sha256":  "b013f7fd4fefed4324cc4573403a0eb2208b0b155b792edb5da1a38540a7f730"
+                      "sha256":  "dbefc3e7ddbabdf8a672d3742f19f69f0f1db8d1a7cb910b2bffb4c2b30040f6"
                   },
                   {
                       "path":  "css/style.css",
-                      "sha256":  "17ee930b192a002670bb9e2e60d50b423ebd85a5e8618decb8b3ff87451a5a8f"
+                      "sha256":  "e33335e690d4cb70fdb4e6fd86247757f04c22f99f73ffde4ecb3d1171847fc2"
                   },
                   {
                       "path":  "js/CSInterface.js",
@@ -23,11 +22,11 @@
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "d4bcc216c5a3e491e177e63428858b22982a29cad390d41eeee91f81e5a622ab"
+                      "sha256":  "ee30509521495c5ad144a6c1111533bffc859f96e0d6d409c9597d9cb648556e"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "466e49039cbb5ede355caaa67e48b7980aada867bb5e0019d6dc3c81a87d0a4a"
+                      "sha256":  "d766d622cfca06b087048ffb3cb160741f2fc23b9f2fdf41ac6ec57a7bc01b82"
                   },
                   {
                       "path":  "sound/done.mp3",

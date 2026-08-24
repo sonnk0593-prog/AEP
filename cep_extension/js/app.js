@@ -10,7 +10,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "2.0.4";
+var APP_VERSION = "2.0.5";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -382,6 +382,7 @@ var dom = {
     btnChangelogClose: document.getElementById("btnChangelogClose"),
     btnCheckUpdate: document.getElementById("btnCheckUpdate"),
     updateStatus: document.getElementById("updateStatus"),
+    btnExportXml: document.getElementById("btnExportXml"),
     mediaCheckPanel: document.getElementById("mediaCheckPanel")
     ,mediaCheckSummary: document.getElementById("mediaCheckSummary")
     ,mediaCheckList: document.getElementById("mediaCheckList")
@@ -933,6 +934,7 @@ function setupEventListeners() {
     });
     dom.btnCancel.addEventListener("click", cancelImportProcess);
     if (dom.btnCopyRelink) dom.btnCopyRelink.addEventListener("click", copyAndRelinkFootage);
+    if (dom.btnExportXml) dom.btnExportXml.addEventListener("click", function () { exportProjectXml(false); });
     if (dom.toastClose) dom.toastClose.addEventListener("click", hideToast);
     if (dom.mediaCheckClose) dom.mediaCheckClose.addEventListener("click", toggleMediaCheck);
     if (dom.mediaCheckStart) dom.mediaCheckStart.addEventListener("click", function () {
@@ -1773,6 +1775,51 @@ function evalJson(script, cb) {
         } catch (e) {
             cb(null, "Không đọc được kết quả từ Premiere: " + raw.substring(0, 300));
         }
+    });
+}
+
+// =========================================================================
+// XUẤT XML
+// =========================================================================
+/**
+ * Xuất project đang mở ra file XML cùng thư mục, cùng tên với project.
+ * force = true khi người dùng đã đồng ý ghi đè file XML có sẵn.
+ */
+function exportProjectXml(force) {
+    if (state.isRunning) {
+        showAlert("Đang bận", "Đợi quá trình Import &amp; Cắt hiện tại xong đã rồi hãy xuất XML.", "warning");
+        return;
+    }
+    ensureOwnScript(function (own) {
+        if (!own) return;
+
+        var btn = dom.btnExportXml;
+        if (btn) { btn.disabled = true; btn.textContent = "⏳ Đang xuất…"; }
+        var restore = function () {
+            if (btn) { btn.disabled = false; btn.innerHTML = "<span>📄 Xuất XML</span>"; }
+        };
+
+        evalJson("cep_exportProjectXml(" + (force ? 1 : 0) + ")", function (res, err) {
+            restore();
+            if (err) { showAlert("Xuất XML thất bại", escapeHtml(err), "error"); return; }
+
+            if (res.needConfirm) {
+                showConfirm("File XML đã tồn tại",
+                    "Đã có file này:<br><strong>" + escapeHtml(res.path) + "</strong><br><br>Ghi đè lên nó?",
+                    "Ghi đè",
+                    function (ok) { if (ok) exportProjectXml(true); });
+                return;
+            }
+            if (!res.success) {
+                showAlert("Xuất XML thất bại", escapeHtml(res.error || "Không rõ nguyên nhân").replace(/\n/g, "<br>"), "error");
+                addLog("error", "Xuất XML thất bại: " + (res.error || ""));
+                return;
+            }
+
+            var kb = Math.max(1, Math.round((res.size || 0) / 1024));
+            addLog("success", "Đã xuất XML: " + res.path + " (" + kb + " KB)");
+            showToast("Đã xuất XML", res.path);
+        });
     });
 }
 

@@ -15,7 +15,7 @@
 // ghi de ham cua panel nap truoc. Panel doi chieu bien nay de biet script dang
 // chay co dung cua no khong.
 // ============================================================================
-var IMPORTCUT_VERSION = "2.0.4";
+var IMPORTCUT_VERSION = "2.0.5";
 
 var TICKS_PER_SECOND = 254016000000;
 var MEDIA_TYPE = 4;
@@ -1096,6 +1096,57 @@ function insertAndRenameClip(track, projectItem, insertPositionSec, labelText, e
 // =========================================================================
 // PUBLIC CEP API
 // =========================================================================
+
+/**
+ * Xuat project dang mo ra file XML, DAT CANH file project va TRUNG TEN project.
+ * Lay duong dan tu app.project.path roi chi thay duoi mo rong -> chac chan cung
+ * thu muc, cung ten, khong phai ghep chuoi thu cong (ten co dau van dung).
+ *
+ * forceOverwrite = 0 va file da ton tai -> tra ve needConfirm, KHONG ghi de,
+ * de panel hoi nguoi dung truoc.
+ */
+function cep_exportProjectXml(forceOverwrite) {
+    var res = { success: false, path: "", needConfirm: false, size: 0 };
+    try {
+        if (!app.project) { res.error = "Ch\u01b0a m\u1edf project n\u00e0o."; return toJson(res); }
+
+        var projPath = app.project.path;
+        if (!projPath || trim(projPath) === "") {
+            res.error = "Project ch\u01b0a \u0111\u01b0\u1ee3c l\u01b0u n\u00ean ch\u01b0a bi\u1ebft \u0111\u1eb7t file XML \u1edf \u0111\u00e2u. H\u00e3y l\u01b0u project (Ctrl+S) r\u1ed3i th\u1eed l\u1ea1i.";
+            return toJson(res);
+        }
+
+        var projFile = new File(projPath);
+        var full = projFile.fsName;                       // vd: D:\Du an\FANPAGE.prproj
+        var outPath = full.replace(/\.[^.\\\/]+$/, "") + ".xml";
+        res.path = outPath;
+
+        var outFile = new File(outPath);
+        if (outFile.exists && !forceOverwrite) { res.needConfirm = true; return toJson(res); }
+
+        // Ten ham co the khac nhau giua cac doi Premiere -> thu lan luot.
+        var called = false;
+        try { app.project.exportFinalCutProXML(outPath, 1); called = true; } catch (e1) {
+            try { app.project.exportFinalCutProXML(outPath); called = true; } catch (e2) {}
+        }
+        if (!called) {
+            res.error = "B\u1ea3n Premiere n\u00e0y kh\u00f4ng h\u1ed7 tr\u1ee3 l\u1ec7nh xu\u1ea5t XML (exportFinalCutProXML).";
+            return toJson(res);
+        }
+
+        // Khong tin vao gia tri tra ve - kiem tra file that su co tren dia.
+        var check = new File(outPath);
+        if (check.exists && check.length > 0) {
+            res.success = true;
+            res.size = check.length;
+        } else {
+            res.error = "Premiere kh\u00f4ng t\u1ea1o \u0111\u01b0\u1ee3c file XML t\u1ea1i:\n" + outPath;
+        }
+    } catch (e) {
+        res.error = "L\u1ed7i xu\u1ea5t XML: " + e.toString();
+    }
+    return toJson(res);
+}
 
 function cep_checkEnvironment() {
     var res = { hasProject: false, projectName: "", projectPath: "", isSaved: false, hasSequence: false, sequenceName: "", numVideoTracks: 0 };

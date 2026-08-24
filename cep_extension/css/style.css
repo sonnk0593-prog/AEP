@@ -878,6 +878,46 @@ body {
     cursor: not-allowed;
 }
 
+/* Nút phụ nhỏ, căn giữa dưới nhóm nút chính.
+   Cỡ chữ giữ nguyên như nút chính (11.5px) - chỉ thu nhỏ cái hộp:
+   cao 26px thay vì 42px, padding hẹp, và KHÔNG giãn (flex: 0 0 auto). */
+.btn-row-mini {
+    display: flex;
+    justify-content: center;
+    padding-top: 8px;
+}
+
+.btn-mini {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-height: 26px;
+    padding: 3px 12px;
+    font-size: 11.5px;
+    font-weight: 600;
+    font-family: inherit;
+    line-height: 1;
+    border-radius: 7px;
+    cursor: pointer;
+    background: rgba(99, 102, 241, 0.14);
+    border: 1px solid rgba(129, 140, 248, 0.38);
+    color: #b9c2ff;
+    transition: all 0.15s ease;
+}
+
+.btn-mini:hover:not(:disabled) {
+    background: rgba(99, 102, 241, 0.26);
+    border-color: rgba(129, 140, 248, 0.65);
+    color: #e5e9ff;
+}
+
+.btn-mini:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
 .relink-icon {
     font-size: 15px;
     line-height: 1;
