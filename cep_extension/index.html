@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto Import &amp; Cut V2</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header-card">
+            <div class="header-title-group">
+                <h1>Auto Import &amp; Cut V2</h1>
+                <p>Tự động dựng kịch bản Google Sheet</p>
+            </div>
+            <div class="header-actions">
+                <button id="btnOpenApi" class="btn-api" title="Cài đặt Gemini API Key">
+                    <span id="apiBtnDot" class="api-dot"></span>
+                    <span>API</span>
+                </button>
+                <!-- Nội dung do app.js điền từ APP_VERSION - đừng ghi số phiên bản ở đây -->
+                <button id="btnVersion" class="version-badge badge-beta" title="Xem changelog"></button>
+            </div>
+        </header>
+
+        <!-- Premiere Environment Status -->
+        <div class="env-bar">
+            <div>
+                <span id="envStatusDot" class="env-status-dot dot-warning"></span>
+                <strong id="envStatusText">Đang kết nối Premiere...</strong>
+            </div>
+            <span id="seqInfoText" style="color: var(--text-muted);">Kiểm tra Sequence...</span>
+        </div>
+
+        <!-- Google Sheets URL Input Card -->
+        <div class="card">
+            <div class="card-title">🔗 Link Google Sheet kịch bản</div>
+            <div class="input-url-group">
+                <input type="text" id="txtGSheetUrl" class="text-input" placeholder="Dán link Google Sheet vào đây (https://docs.google.com/spreadsheets/...)" autocomplete="off">
+            </div>
+            <div class="help-text">
+                💡 Tự động nhận diện tab kịch bản qua <code>#gid=...</code>. Đảm bảo sheet đã bật <strong>Bất kỳ ai có liên kết đều có thể xem</strong>.
+            </div>
+        </div>
+
+        <!-- Configuration Options -->
+        <div class="card">
+            <div class="card-title">⚙️ Cấu hình dựng</div>
+            <div class="options-grid">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="chkCopy">
+                    <span>Copy file về Footage/</span>
+                </label>
+            </div>
+            <input type="number" id="txtDefaultSec" value="5" hidden>
+            <input type="checkbox" id="chkTram" checked hidden>
+            <div class="auto-timecode-block">
+                <div class="auto-timecode-head">
+                    <span class="mapping-title">⏱ Timecode tự động</span>
+                    <span class="auto-timecode-note">Với những đoạn không có đủ timecode sẽ hiện màu đỏ trên Timeline</span>
+                </div>
+                <div class="auto-timecode-section">
+                    <label class="auto-timecode-option">
+                        <input type="checkbox" id="chkSingleTime" checked>
+                        <span>Chỉ có 1 Timecode</span>
+                        <span>lấy</span>
+                        <input type="number" id="txtSingleTimeSec" class="num-input" value="5" min="1" max="60">
+                        <span>giây trước timecode</span>
+                    </label>
+                </div>
+                <div class="auto-timecode-section">
+                    <div class="auto-timecode-label">Không có timecode</div>
+                    <label class="radio-label">
+                        <input type="radio" name="noTimecodeMode" id="radioCenterTime" value="center" checked>
+                        <span>Lấy</span>
+                        <input type="number" id="txtCenterTimeSec" class="num-input" value="5" min="1" max="60">
+                        <span>giây chính giữa video</span>
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="noTimecodeMode" id="radioFullVideo" value="full">
+                        <span>Lấy cả video</span>
+                    </label>
+                </div>
+            </div>
+            <!-- Luôn bật, không hiển thị: đổi tên clip theo số hàng -->
+            <input type="checkbox" id="chkLabel" checked hidden>
+
+            <!-- Nhận diện cột: tự động / thủ công -->
+            <div class="mapping-block">
+                <div class="mapping-head">
+                    <span class="mapping-title">Nhận diện cột</span>
+                    <div class="seg-group">
+                        <button id="btnColAuto" class="seg-btn active" type="button">Tự động</button>
+                        <button id="btnColManual" class="seg-btn" type="button">Thủ công</button>
+                    </div>
+                </div>
+
+                <div id="manualCols" class="manual-cols">
+                    <div class="manual-row">
+                        <span class="manual-row-label v1">Source chính (V1)</span>
+                        <label class="manual-field">Folder <select id="selMainFolder" class="col-select"></select></label>
+                        <label class="manual-field">Tên file <select id="selMainCode" class="col-select"></select></label>
+                        <label class="manual-field">Timecode <select id="selMainTime" class="col-select"></select></label>
+                    </div>
+                    <div class="manual-row">
+                        <span class="manual-row-label v2">Source trám (V2)</span>
+                        <label class="manual-field">Folder <select id="selTramFolder" class="col-select"></select></label>
+                        <label class="manual-field">Tên file <select id="selTramCode" class="col-select"></select></label>
+                        <label class="manual-field">Timecode <select id="selTramTime" class="col-select"></select></label>
+                    </div>
+                    <div class="manual-hint">
+                        Chọn theo tên cột trên Google Sheet (A, B, C…). Để <strong>—</strong> nghĩa là không có cột đó:
+                        Folder trống = ô Tên file đã chứa đường dẫn đầy đủ; Timecode trống = lấy 5 giây giữa video.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Single Action Button Group -->
+        <div class="btn-group">
+            <button id="btnLoadCheck" class="btn btn-secondary">
+                <span>📥 Tải &amp; kiểm tra kịch bản</span>
+            </button>
+            <button id="btnStart" class="btn btn-primary" disabled>
+                <span>✂️ Bắt đầu cắt</span>
+            </button>
+            <button id="btnCancel" class="btn btn-danger" style="display: none;">
+                <span>⏹️ Dừng lại</span>
+            </button>
+            <button id="btnCopyRelink" class="btn-relink" title="Copy tất cả source trong Timeline về Footage và relink lại">
+                <span class="relink-icon">📂</span>
+                <span class="relink-text">
+                    <span id="relinkLabel" class="relink-title">Copy &amp; Relink Footage</span>
+                    <span class="relink-sub">Gom source về Footage/</span>
+                </span>
+            </button>
+        </div>
+
+        <!-- Progress Card -->
+        <div id="progressCard" class="progress-card">
+            <div class="progress-header">
+                <span id="progressStepText" class="progress-title">Đang xử lý...</span>
+                <span id="progressPercent" class="progress-percentage">0%</span>
+            </div>
+            <div class="progress-bar-bg">
+                <div id="progressBarFill" class="progress-bar-fill"></div>
+            </div>
+            <div id="currentActionText" class="current-action-text">Đang kết nối...</div>
+
+            <!-- Tiến độ copy file hiện tại -->
+            <div id="copyProgressRow" class="copy-progress">
+                <div class="copy-head">
+                    <span id="copyFileName" class="copy-file">—</span>
+                    <span id="copySpeed" class="copy-speed">0 MB/s</span>
+                </div>
+                <div class="copy-bar-bg">
+                    <div id="copyBarFill" class="copy-bar-fill"></div>
+                </div>
+                <div id="copyBytes" class="copy-bytes"></div>
+                <div id="copyTotal" class="copy-total"></div>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div id="statClips" class="stat-val val-success">0</div>
+                    <div class="stat-lbl">Clip V1/V2</div>
+                </div>
+                <div class="stat-box">
+                    <div id="statCopied" class="stat-val">0</div>
+                    <div class="stat-lbl">Đã tải/Copy</div>
+                </div>
+                <div class="stat-box">
+                    <div id="statWarning" class="stat-val val-warning">0</div>
+                    <div class="stat-lbl">Cảnh báo</div>
+                </div>
+                <div class="stat-box">
+                    <div id="statError" class="stat-val val-error">0</div>
+                    <div class="stat-lbl">Lỗi</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Media Path Check Tab -->
+        <div id="mediaCheckPanel" class="media-check-card">
+            <div class="media-check-header">
+                <span class="card-title" style="margin-bottom: 0;">🔍 Kiểm tra đường dẫn media</span>
+                <button id="mediaCheckClose" class="tab-toggle-btn" title="Thu gọn">Thu gọn</button>
+            </div>
+            <div id="mediaCheckSummary" class="media-check-summary"></div>
+            <div id="mediaCheckList" class="media-check-list"></div>
+            <div class="media-check-actions">
+                <button id="mediaCheckStart" class="btn btn-primary" disabled>✂️ Bắt đầu cắt</button>
+            </div>
+        </div>
+
+        <!-- Live Activity Log -->
+        <div class="log-card">
+            <div class="log-header">
+                <span class="card-title" style="margin-bottom: 0;">📋 Nhật ký xử lý</span>
+                <div class="log-header-actions">
+                    <div class="filter-tabs">
+                        <button class="filter-btn active" data-filter="all">Tất cả</button>
+                        <button class="filter-btn" data-filter="error">Lỗi</button>
+                        <button class="filter-btn" data-filter="warning">Cảnh báo</button>
+                        <button class="filter-btn" data-filter="success">Thành công</button>
+                    </div>
+                    <button id="logToggle" class="tab-toggle-btn">Xem thêm</button>
+                </div>
+            </div>
+
+            <div id="logList" class="log-list">
+                <div class="log-empty">Dán link Google Sheet và nhấn "Bắt đầu Import &amp; Cắt" để tự động xử lý.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gemini API Settings Modal -->
+    <div id="apiModalOverlay" class="ai-modal-overlay">
+        <div class="ai-modal ai-modal-compact">
+            <div class="ai-modal-header">
+                <span class="ai-modal-title">✨ Cài đặt Gemini API</span>
+                <button id="btnApiModalClose" class="btn-ai-modal-close" title="Đóng">✕</button>
+            </div>
+
+            <div class="api-field">
+                <div class="api-field-head">
+                    <span class="api-field-label">Gemini API Key</span>
+                    <span id="aiStatusBadge" class="ai-status-badge">Chưa kích hoạt</span>
+                </div>
+                <div class="ai-key-row">
+                    <input type="password" id="txtGeminiKey" class="ai-key-input" placeholder="AIza..." autocomplete="off">
+                    <button id="btnAiSave" class="btn-ai-save">💾 Lưu Key</button>
+                </div>
+            </div>
+
+            <div class="api-note">
+                Key được lưu trên máy này. Sau khi lưu, AI sẽ tự động hỗ trợ nhận diện cột và đặt tên clip.
+            </div>
+
+            <div class="ai-model-info">⚡ Model: gemini-3.6-flash &nbsp;|&nbsp; <a href="https://aistudio.google.com/app/apikey" style="color:#60a5fa;text-decoration:none;">Lấy API Key miễn phí →</a></div>
+        </div>
+    </div>
+
+    <!-- Changelog -->
+    <div id="changelogOverlay" class="ai-modal-overlay">
+        <div class="ai-modal ai-modal-compact changelog-modal">
+            <div class="ai-modal-header">
+                <span id="changelogVersion" class="ai-modal-title">✦ Changelog</span>
+                <button id="btnChangelogClose" class="btn-ai-modal-close" title="Đóng">✕</button>
+            </div>
+            <div class="changelog-list">
+                <div>- Sửa mốc "hết"/"cuối": đọc đúng thời lượng video thay vì cắt 5 giây</div>
+                <div>- Sửa nút "Thu gọn" tab kiểm tra media: gấp lại thay vì ẩn cả tab</div>
+                <div>- Thống nhất cách đánh số phiên bản (chuẩn bị cho cập nhật tự động)</div>
+                <div>- Thêm tính năng kiểm tra file, tìm file trước khi cắt</div>
+                <div>- Tuỳ chọn timecode khi timecode không ghi đủ</div>
+            </div>
+            <div class="changelog-update-row">
+                <span id="updateStatus" class="update-status"></span>
+                <button id="btnCheckUpdate" class="btn btn-secondary">⟳ Kiểm tra cập nhật</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hộp thoại dùng chung (thay cho alert/confirm của trình duyệt) -->
+    <div id="dlgOverlay" class="ai-modal-overlay">
+        <div class="ai-modal ai-modal-compact">
+            <div class="ai-modal-header">
+                <span class="ai-modal-title"><span id="dlgIcon">📂</span> <span id="dlgTitle">Thông báo</span></span>
+                <button id="dlgClose" class="btn-ai-modal-close" title="Đóng">✕</button>
+            </div>
+            <div id="dlgBody" class="dlg-body"></div>
+            <div class="dlg-actions">
+                <button id="dlgCancel" class="btn btn-secondary dlg-btn">Huỷ</button>
+                <button id="dlgOk" class="btn btn-primary dlg-btn">Tiếp tục</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Thông báo hoàn tất -->
+    <div id="toast" class="toast">
+        <span id="toastIcon" class="toast-icon">✅</span>
+        <div class="toast-text">
+            <div id="toastTitle" class="toast-title">Hoàn tất</div>
+            <div id="toastMsg" class="toast-msg"></div>
+        </div>
+        <button id="toastClose" class="toast-close" title="Đóng">✕</button>
+    </div>
+
+    <!-- Âm thanh báo hoàn tất -->
+    <audio id="doneSound" src="sound/done.mp3" preload="auto"></audio>
+
+    <!-- Scripts -->
+    <script src="js/CSInterface.js"></script>
+    <!-- updater.js dùng APP_VERSION + csInterface, nhưng chỉ chạy khi được app.js gọi -->
+    <script src="js/updater.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

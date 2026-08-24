@@ -1,0 +1,38 @@
+{
+    "version":  "2.0.0",
+    "notes":  [
+                  "Sửa mốc \u0027hết\u0027: đọc đúng thời lượng video thay vì cắt 5 giây",
+                  "Sửa nút Thu gọn tab kiểm tra media",
+                  "Thêm cập nhật tự động từ GitHub"
+              ],
+    "files":  [
+                  {
+                      "path":  "index.html",
+                      "sha256":  "9ee15b89b4a6148c4f35eee2b291e7b88ab37b0be26e327b4fd2365b1e8bdd90"
+                  },
+                  {
+                      "path":  "css/style.css",
+                      "sha256":  "17ee930b192a002670bb9e2e60d50b423ebd85a5e8618decb8b3ff87451a5a8f"
+                  },
+                  {
+                      "path":  "js/CSInterface.js",
+                      "sha256":  "2016ece85c69ae635f27df1380ff4644c9bc4762bb7e6934ed6e0a603c414e2c"
+                  },
+                  {
+                      "path":  "js/updater.js",
+                      "sha256":  "fca1511ed12669765f83b7bc6dd094c060e814ea4b334ac4e0a940f7fdf07eeb"
+                  },
+                  {
+                      "path":  "js/app.js",
+                      "sha256":  "3e5948fbe7a38a7dfc70c3ab72cd5aedbf7e98806df1f12f2a32bd1cc7a1cd65"
+                  },
+                  {
+                      "path":  "jsx/hostscript.jsx",
+                      "sha256":  "05d760ba76275a00849eaa0174caadbd9694b36c5879efda9f58728ae5bf643c"
+                  },
+                  {
+                      "path":  "sound/done.mp3",
+                      "sha256":  "90530cfb44ee044f847e3a0e480d8d68efec3549acb62c02287cc30365b33096"
+                  }
+              ]
+}

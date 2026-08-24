@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    LUU Y VE PHIEN BAN:
+    So o day CO DINH, khong tang moi lan phat hanh ban moi.
+    Premiere chi doc manifest luc khoi dong, nen doi so o day = bat nguoi dung
+    khoi dong lai Premiere, lam mat y nghia cua cap nhat tu dong (OTA).
+    Phien ban that nam o APP_VERSION (js/app.js) + IMPORTCUT_VERSION (jsx/hostscript.jsx).
+    Chi sua o day khi doi dong san pham (V2 -> V3) hoac doi cau hinh panel.
+-->
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.antigravity.autoimportcut.v2" ExtensionBundleVersion="2.0.0"
+        ExtensionBundleName="Auto Import &amp; Cut V2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <ExtensionList>
+        <Extension Id="com.antigravity.autoimportcut.v2.panel" Version="2.0.0" />
+    </ExtensionList>
+    <ExecutionEnvironment>
+        <HostList>
+            <!-- Premiere Pro CC 2018 (12.0) up to Premiere Pro 2025+ (99.0) -->
+            <Host Name="PPRO" Version="[12.0,99.9]" />
+        </HostList>
+        <LocaleList>
+            <Locale Code="All" />
+        </LocaleList>
+        <RequiredRuntimeList>
+            <RequiredRuntime Name="CSXS" Version="7.0" />
+        </RequiredRuntimeList>
+    </ExecutionEnvironment>
+    <DispatchInfoList>
+        <Extension Id="com.antigravity.autoimportcut.v2.panel">
+            <DispatchInfo>
+                <Resources>
+                    <MainPath>./index.html</MainPath>
+                    <ScriptPath>./jsx/hostscript.jsx</ScriptPath>
+                    <CEPEngine>
+                        <CommandLine>
+                            <Parameter>--enable-nodejs</Parameter>
+                            <Parameter>--mixed-context</Parameter>
+                        </CommandLine>
+                    </CEPEngine>
+                </Resources>
+                <Lifecycle>
+                    <AutoVisible>true</AutoVisible>
+                </Lifecycle>
+                <UI>
+                    <Type>Panel</Type>
+                    <Menu>Auto Import &amp; Cut V2</Menu>
+                    <Geometry>
+                        <Size>
+                            <Width>460</Width>
+                            <Height>650</Height>
+                        </Size>
+                        <MinSize>
+                            <Width>340</Width>
+                            <Height>450</Height>
+                        </MinSize>
+                        <MaxSize>
+                            <Width>1200</Width>
+                            <Height>1600</Height>
+                        </MaxSize>
+                    </Geometry>
+                    <Icons>
+                        <Icon Type="Normal">./img/icon.png</Icon>
+                        <Icon Type="DarkNormal">./img/icon.png</Icon>
+                    </Icons>
+                </UI>
+            </DispatchInfo>
+        </Extension>
+    </DispatchInfoList>
+</ExtensionManifest>
