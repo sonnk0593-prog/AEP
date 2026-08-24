@@ -33,6 +33,16 @@ CSInterface.prototype.getSystemPath = function (pathType) {
     var path = "";
     if (window.__adobe_cep__) {
         path = decodeURI(window.__adobe_cep__.getSystemPath(pathType));
+        // CEP trả về dạng URI: "file:///C:/Users/..." chứ KHÔNG phải đường dẫn thật.
+        // Bản CSInterface chính thức của Adobe có bước bỏ tiền tố này; bản rút gọn
+        // trước đây thiếu nó, nên mọi thao tác đọc/ghi file đều thất bại âm thầm.
+        if (path.indexOf("file:///") === 0) {
+            path = path.substring(8);
+            // Windows ra "C:/..." (đúng rồi); macOS/Linux cần trả lại dấu / ở đầu.
+            if (!/^[A-Za-z]:/.test(path)) path = "/" + path;
+        } else if (path.indexOf("file://") === 0) {
+            path = path.substring(7);
+        }
     }
     return path;
 };

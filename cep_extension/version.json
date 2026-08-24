@@ -1,13 +1,13 @@
 {
-    "version":  "2.0.2",
+    "version":  "2.0.3",
     "notes":  [
-                  "Bản thử cập nhật tự động",
-                  "Nếu bạn thấy dòng có dấu ✅ trong changelog, OTA đã ghi đè file thành công"
+                  "Sửa lỗi không ghi được file khi cập nhật (đường dẫn dính tiền tố file:///)",
+                  "Báo lỗi cập nhật chính xác hơn: kèm đường dẫn thật và trạng thái Node.js/cep.fs"
               ],
     "files":  [
                   {
                       "path":  "index.html",
-                      "sha256":  "92e11340885997cf5433e18c692c50c526a51f80adb74de7af71be19cedd58c7"
+                      "sha256":  "0e1931572d2504040509e07984e0f3d7e81281b57580c4c937e834e3a05acce8"
                   },
                   {
                       "path":  "css/style.css",
@@ -15,19 +15,19 @@
                   },
                   {
                       "path":  "js/CSInterface.js",
-                      "sha256":  "2016ece85c69ae635f27df1380ff4644c9bc4762bb7e6934ed6e0a603c414e2c"
+                      "sha256":  "65752afe5217e5f7b6994e6165da0e7c088f9b7faa13dd776c206e5aa76b92ce"
                   },
                   {
                       "path":  "js/updater.js",
-                      "sha256":  "c7e54704e43e328b2d95a589da6ccd0730ff4bee6cf5df74a21a5c51faa8dede"
+                      "sha256":  "b437082f3d66808c31f53609a53533ee7a345e40b248cd142f13e4c5476c2d21"
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "1e0c62151193763c2cf98cd794e5f68201fc79018234ff563b2991d15be40164"
+                      "sha256":  "522d4a2b65cc4754d538c1876ee3bb124b2977ed2dacd4427f10312f7a86174d"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "2618fa2432422df8704644e9521e714cf1622d2b2396ab9df0536d2ab50145c0"
+                      "sha256":  "cd00ef706784acb9ea83b7f9f8e07d5bebdea7dd21cd9799019f1699713e0bb6"
                   },
                   {
                       "path":  "sound/done.mp3",

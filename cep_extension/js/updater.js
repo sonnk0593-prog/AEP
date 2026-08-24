@@ -164,8 +164,30 @@ var Updater = (function () {
     // ---------------------------------------------------------------------
     function configured() { return REPO_OWNER !== "" && REPO_NAME !== ""; }
 
+    /**
+     * Thư mục cài panel, dạng đường dẫn thật ("C:/Users/...").
+     * Vẫn tự bỏ tiền tố "file:///" một lần nữa ở đây: CSInterface.js có thể bị
+     * ghi đè bởi bản rút gọn thiếu bước đó, mà sai chỗ này thì mọi lệnh ghi file
+     * đều hỏng và rất khó truy ra nguyên nhân.
+     */
     function extensionDir() {
-        try { return normPath(csInterface.getSystemPath(SystemPath.EXTENSION)); } catch (e) { return ""; }
+        var p = "";
+        try { p = String(csInterface.getSystemPath(SystemPath.EXTENSION) || ""); } catch (e) { return ""; }
+        if (p.indexOf("file:///") === 0) {
+            p = p.substring(8);
+            if (!/^[A-Za-z]:/.test(p)) p = "/" + p;
+        } else if (p.indexOf("file://") === 0) {
+            p = p.substring(7);
+        }
+        return normPath(p);
+    }
+
+    /** Đường dẫn phải là tuyệt đối thì cep.fs/Node mới ghi được. */
+    function assertUsablePath(dir) {
+        if (dir === "") throw new Error("Không xác định được thư mục cài đặt panel");
+        if (!/^[A-Za-z]:\//.test(dir) && dir.charAt(0) !== "/") {
+            throw new Error("Đường dẫn cài đặt không hợp lệ: " + dir);
+        }
     }
 
     /** raw.githubusercontent phục vụ qua CDN có cache ~5 phút -> thêm tham số phá cache. */
@@ -250,24 +272,39 @@ var Updater = (function () {
     // ---------------------------------------------------------------------
     function apply(files) {
         var dir = extensionDir();
-        if (!dir) throw new Error("Không xác định được thư mục cài đặt panel");
+        assertUsablePath(dir);
         var backupDir = joinPath(dir, "_backup");
         var i, live, dst, cur;
 
+        // --- Sao lưu. Phải ĐẾM xem có thật sự sao lưu được không: trước đây
+        // bỏ qua kết quả writeBase64 nên khi ghi hỏng, thông báo lỗi vẫn bảo
+        // "bản cũ nằm ở _backup" trong khi thư mục đó chưa từng được tạo. ---
+        var existing = 0, backedUp = 0;
         for (i = 0; i < files.length; i++) {
             live = joinPath(dir, files[i].path);
             if (!fileExists(live)) continue;
+            existing++;
             cur = readBase64(live);
             if (cur === null) continue;
             dst = joinPath(backupDir, files[i].path);
             mkdirp(dirOf(dst));
-            writeBase64(dst, cur);
+            if (writeBase64(dst, cur)) backedUp++;
         }
+
+        // Có file để sao lưu mà không sao lưu nổi cái nào = chắc chắn cũng không
+        // ghi đè được. Dừng ở đây, khi chưa file thật nào bị đụng tới.
+        if (existing > 0 && backedUp === 0) {
+            throw new Error("Không ghi được vào thư mục cài đặt.\nĐường dẫn: " + dir +
+                            "\nNode.js: " + (nodeFs ? "có" : "không") + " · cep.fs: " + (cepFs() ? "có" : "không"));
+        }
+
         for (i = 0; i < files.length; i++) {
             live = joinPath(dir, files[i].path);
             mkdirp(dirOf(live));
             if (!writeBase64(live, files[i].b64)) {
-                throw new Error("Không ghi được " + files[i].path + " (bản cũ nằm ở _backup)");
+                throw new Error("Không ghi được " + files[i].path +
+                                "\nĐường dẫn: " + live +
+                                "\nBản cũ đã lưu ở _backup, chạy restore.bat để quay lại.");
             }
         }
         return backupDir;
