@@ -10,7 +10,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "2.0.6";
+var APP_VERSION = "2.0.7";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -1858,9 +1858,32 @@ function exportProjectXml(force) {
     });
 }
 
-/** Mở Explorer và chọn sẵn file XML vừa xuất. */
+/**
+ * Đường tốt nhất: nhờ CEP chạy `explorer /select,<file>` để Explorer mở thư mục
+ * VÀ bôi sẵn đúng file. Trả về false nếu bản CEP này không có sẵn API đó, lúc
+ * ấy gọi sang ExtendScript để mở thư mục (không bôi sẵn file).
+ */
+function tryRevealWithCep(winPath) {
+    try {
+        var proc = (window.cep && window.cep.process) ? window.cep.process : null;
+        if (!proc || !proc.createProcess) return false;
+        var exes = ["explorer.exe", "C:\\Windows\\explorer.exe"];
+        for (var i = 0; i < exes.length; i++) {
+            try {
+                var r = proc.createProcess(exes[i], "/select," + winPath);
+                if (r && r.err === 0) return true;
+            } catch (eOne) {}
+        }
+    } catch (e) {}
+    return false;
+}
+
+/** Mở Explorer ở thư mục chứa file XML vừa xuất. */
 function openXmlFolder() {
     if (!state.lastXmlPath) return;
+
+    if (tryRevealWithCep(state.lastXmlPath.replace(/\//g, "\\"))) return;
+
     evalJson("cep_revealInExplorer(" + toEscapedJson(state.lastXmlPath) + ")", function (res, err) {
         if (err) { showAlert("Không mở được thư mục", escapeHtml(err), "error"); return; }
         if (!res.success) {

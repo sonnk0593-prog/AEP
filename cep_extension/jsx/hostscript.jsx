@@ -15,7 +15,7 @@
 // ghi de ham cua panel nap truoc. Panel doi chieu bien nay de biet script dang
 // chay co dung cua no khong.
 // ============================================================================
-var IMPORTCUT_VERSION = "2.0.6";
+var IMPORTCUT_VERSION = "2.0.7";
 
 var TICKS_PER_SECOND = 254016000000;
 var MEDIA_TYPE = 4;
@@ -1149,8 +1149,10 @@ function cep_exportProjectXml(forceOverwrite) {
 }
 
 /**
- * Mo Windows Explorer va CHON SAN file duoc chi dinh (khong chi mo thu muc).
- * Duong dan do chinh panel gui lai tu ket qua xuat XML, khong phai nguoi dung go.
+ * Mo thu muc chua file bang Explorer.
+ * KHONG dung app.system(): Premiere Pro khong co ham do (xem ghi chu o
+ * copyViaScriptFile). Folder.execute() la API san co cua ExtendScript, mo thang
+ * thu muc bang trinh quan ly file mac dinh, khong can goi lenh he thong.
  */
 function cep_revealInExplorer(path) {
     var res = { success: false };
@@ -1161,10 +1163,17 @@ function cep_revealInExplorer(path) {
             res.error = "Không còn thấy file:\n" + path + "\n(có thể đã bị di chuyển hoặc xoá)";
             return toJson(res);
         }
-        // explorer.exe doi dau gach nguoc; cu phap /select, phai dinh lien dau phay.
-        var win = f.fsName.replace(/\//g, "\\");
-        app.system('explorer.exe /select,"' + win + '"');
-        res.success = true;
+        var folder = f.parent;
+        if (!folder || !folder.exists) {
+            res.error = "Không còn thấy thư mục chứa file:\n" + path;
+            return toJson(res);
+        }
+        if (folder.execute()) {
+            res.success = true;
+            res.folder = folder.fsName;
+        } else {
+            res.error = "Windows từ chối mở thư mục:\n" + folder.fsName;
+        }
     } catch (e) {
         res.error = "Không mở được thư mục: " + e.toString();
     }

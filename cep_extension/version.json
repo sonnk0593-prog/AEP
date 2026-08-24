@@ -1,7 +1,7 @@
 {
-    "version":  "2.0.6",
+    "version":  "2.0.7",
     "notes":  [
-                  "Xuất XML xong: nút hiện dấu tích xanh và có thêm nút Mở thư mục XML"
+                  "Sửa lỗi nút Mở thư mục XML báo \u0027app.system is not a function\u0027"
               ],
     "files":  [
                   {
@@ -22,11 +22,11 @@
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "7fce7b7a036c8b57138081a2f5e4e2697ad707e7cec862afb3eab5bd0538508f"
+                      "sha256":  "5c13cfa67d2c164cb6b3ebacd71d82ffad7f34fa63f63354abd8deffb755fb74"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "c234e05989fa7dd62af1df362a2f74349aeabf33af71dc4d3b6993247c33f665"
+                      "sha256":  "3279d541cb365326a4e86424e9ab004d88eb2dda88bac00c02dfd35b8766632c"
                   },
                   {
                       "path":  "sound/done.mp3",
