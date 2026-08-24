@@ -10,7 +10,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "2.0.8";
+var APP_VERSION = "2.0.9";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -805,6 +805,7 @@ function setUpdateStatus(text, isError) {
 
 // Ghi lại phiên bản vừa cập nhật, để sau khi panel nạp lại thì biết mà báo kết quả.
 var LS_UPDATED_TO = "autoimportcut_v2_updated_to";
+var LS_UPDATE_HOSTMSG = "autoimportcut_v2_update_hostmsg";  // lý do nạp lại script thất bại
 
 /**
  * Chạy ngay khi mở panel: nếu lần trước vừa cập nhật thì báo kết quả.
@@ -812,10 +813,17 @@ var LS_UPDATED_TO = "autoimportcut_v2_updated_to";
  * nhờ vậy bắt được cả trường hợp file đã ghi nhưng panel vẫn nạp code cũ.
  */
 function reportUpdateResult() {
-    var flag = null;
-    try { flag = localStorage.getItem(LS_UPDATED_TO); } catch (e) { return; }
+    var flag = null, hostMsg = "";
+    try {
+        flag = localStorage.getItem(LS_UPDATED_TO);
+        hostMsg = localStorage.getItem(LS_UPDATE_HOSTMSG) || "";
+    } catch (e) { return; }
     if (!flag) return;
-    try { localStorage.removeItem(LS_UPDATED_TO); } catch (e2) {}
+    try {
+        localStorage.removeItem(LS_UPDATED_TO);
+        localStorage.removeItem(LS_UPDATE_HOSTMSG);
+    } catch (e2) {}
+    if (hostMsg) addLog("warning", "Nạp lại script trong Premiere không thành công — " + hostMsg);
 
     if (flag !== APP_VERSION) {
         showAlert("Cập nhật chưa có hiệu lực",
@@ -918,7 +926,11 @@ function doInstallUpdate(info) {
         addLog("success", "Đã cập nhật lên bản " + info.version + " (" + res.count + " file). Bản cũ lưu ở _backup.");
         setUpdateStatus("Xong, đang khởi động lại…");
         // Đánh dấu trước khi nạp lại: sau khi reload, code mới sẽ đọc cờ này để báo kết quả.
-        try { localStorage.setItem(LS_UPDATED_TO, info.version); } catch (e) {}
+        // Giữ luôn kết quả nạp lại script - nhật ký bị xoá sạch khi panel reload.
+        try {
+            localStorage.setItem(LS_UPDATED_TO, info.version);
+            localStorage.setItem(LS_UPDATE_HOSTMSG, res.hostReloaded ? "" : String(res.hostDetail || ""));
+        } catch (e) {}
         setTimeout(function () { location.reload(); }, 900);
     }).catch(function (err) {
         if (dom.btnCheckUpdate) dom.btnCheckUpdate.disabled = false;
@@ -1879,30 +1891,15 @@ function exportProjectXml(force) {
 }
 
 /**
- * Đường tốt nhất: nhờ CEP chạy `explorer /select,<file>` để Explorer mở thư mục
- * VÀ bôi sẵn đúng file. Trả về false nếu bản CEP này không có sẵn API đó, lúc
- * ấy gọi sang ExtendScript để mở thư mục (không bôi sẵn file).
+ * Mở Explorer ở thư mục chứa file XML vừa xuất.
+ *
+ * ĐÃ THỬ VÀ BỎ: nhờ CEP chạy `explorer /select,<file>` để bôi sẵn đúng file.
+ * cep.process.createProcess() bọc tham số vào dấu nháy, explorer không hiểu
+ * được cú pháp /select, nên nó mở đại thư mục Documents. Tệ hơn là lệnh vẫn
+ * báo thành công nên không rơi sang đường dự phòng. Dùng thẳng ExtendScript.
  */
-function tryRevealWithCep(winPath) {
-    try {
-        var proc = (window.cep && window.cep.process) ? window.cep.process : null;
-        if (!proc || !proc.createProcess) return false;
-        var exes = ["explorer.exe", "C:\\Windows\\explorer.exe"];
-        for (var i = 0; i < exes.length; i++) {
-            try {
-                var r = proc.createProcess(exes[i], "/select," + winPath);
-                if (r && r.err === 0) return true;
-            } catch (eOne) {}
-        }
-    } catch (e) {}
-    return false;
-}
-
-/** Mở Explorer ở thư mục chứa file XML vừa xuất. */
 function openXmlFolder() {
     if (!state.lastXmlPath) return;
-
-    if (tryRevealWithCep(state.lastXmlPath.replace(/\//g, "\\"))) return;
 
     evalJson("cep_revealInExplorer(" + toEscapedJson(state.lastXmlPath) + ")", function (res, err) {
         if (err) { showAlert("Không mở được thư mục", escapeHtml(err), "error"); return; }

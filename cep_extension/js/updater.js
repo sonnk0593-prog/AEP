@@ -317,15 +317,16 @@ var Updater = (function () {
     function reloadHostScript(expectVersion) {
         return new Promise(function (resolve) {
             var jsx = extensionDir() + "/jsx/hostscript.jsx";
-            // Nạp lại xong thì ĐỌC NGAY số phiên bản của script vừa nạp. Trước đây
-            // chỉ gọi rồi mặc định coi là xong, nên khi nạp hỏng cũng không ai biết.
+            // Nạp lại xong thì ĐỌC NGAY số phiên bản của script vừa nạp, và nếu
+            // hỏng thì trả về NGUYÊN VĂN lỗi. Trước đây chỉ trả về "err" nên khi
+            // nạp thất bại không có cách nào biết vì sao.
             var script =
                 '(function(){ try { $.evalFile(new File(' + JSON.stringify(jsx) + ')); ' +
-                'return (typeof IMPORTCUT_VERSION !== "undefined") ? IMPORTCUT_VERSION : ""; } ' +
-                'catch(e) { return "ERR"; } })()';
+                'return (typeof IMPORTCUT_VERSION !== "undefined") ? IMPORTCUT_VERSION : "(khong thay IMPORTCUT_VERSION)"; } ' +
+                'catch(e) { return "ERR: " + e.toString(); } })()';
             csInterface.evalScript(script, function (r) {
                 var got = String(r === undefined || r === null ? "" : r).replace(/^"|"$/g, "");
-                resolve(got === expectVersion);
+                resolve({ ok: got === expectVersion, detail: got });
             });
         });
     }
@@ -334,8 +335,13 @@ var Updater = (function () {
     function install(info) {
         return download(info).then(function (files) {
             var backupDir = apply(files);
-            return reloadHostScript(info.version).then(function (hostReloaded) {
-                return { count: files.length, backupDir: backupDir, hostReloaded: hostReloaded };
+            return reloadHostScript(info.version).then(function (host) {
+                return {
+                    count: files.length,
+                    backupDir: backupDir,
+                    hostReloaded: host.ok,
+                    hostDetail: host.detail
+                };
             });
         });
     }
