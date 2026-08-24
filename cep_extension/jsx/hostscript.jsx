@@ -21,7 +21,7 @@
 // ghi de ham cua panel nap truoc. Panel doi chieu bien nay de biet script dang
 // chay co dung cua no khong.
 // ============================================================================
-var IMPORTCUT_VERSION = "2.1.2";
+var IMPORTCUT_VERSION = "2.1.3";
 
 var TICKS_PER_SECOND = 254016000000;
 var MEDIA_TYPE = 4;
