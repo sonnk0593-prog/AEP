@@ -51,9 +51,19 @@
                     <Type>Panel</Type>
                     <Menu>Auto Import &amp; Cut V2</Menu>
                     <Geometry>
+                        <!--
+                            Size = kich thuoc panel luc MOI mo lan dau.
+                            De 580x950 cho thay het mot luot: khoi kich ban, cau hinh
+                            dung, ba nut chinh, nut Xuat XML va bang thong ke - khong
+                            phai keo panel to ra moi lan mo.
+                            LUU Y: Premiere NHO kich thuoc panel theo workspace. Neu
+                            truoc do da mo va keo panel roi thi no dung so da nho, khong
+                            dung so o day. Muon ap lai: Window > Workspaces > Reset to
+                            Saved Layout.
+                        -->
                         <Size>
-                            <Width>460</Width>
-                            <Height>650</Height>
+                            <Width>580</Width>
+                            <Height>950</Height>
                         </Size>
                         <MinSize>
                             <Width>340</Width>

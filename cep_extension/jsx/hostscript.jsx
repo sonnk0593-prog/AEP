@@ -21,7 +21,7 @@
 // ghi de ham cua panel nap truoc. Panel doi chieu bien nay de biet script dang
 // chay co dung cua no khong.
 // ============================================================================
-var IMPORTCUT_VERSION = "2.1.3";
+var IMPORTCUT_VERSION = "2.1.4";
 
 var TICKS_PER_SECOND = 254016000000;
 var MEDIA_TYPE = 4;
@@ -1206,21 +1206,87 @@ function insertAndRenameClip(track, projectItem, insertPositionSec, labelText, e
 // =========================================================================
 
 /**
- * Xuat project dang mo ra file XML, DAT CANH file project va TRUNG TEN project.
+ * Dem so the <sequence ...> co trong file XML vua xuat.
+ *
+ * VI SAO CAN: app.project.exportFinalCutProXML() co the tao ra file XML "rong
+ * ruot" - chi co danh sach file media, khong co timeline nao. Import nguoc lai
+ * vao Premiere thi chi thay cac clip roi trong bin, khong co sequence. Neu chi
+ * kiem tra "file co ton tai khong" thi loi nay im lang di qua.
+ *
+ * Doc theo tung khoi 1MB thay vi nuot ca file: project lon co the ra XML vai
+ * chuc MB, ExtendScript doc mot phat rat de treo.
+ * Giu lai 20 ky tu cuoi moi khoi (tail) va KHONG dem trong phan tail cho toi
+ * luot sau, de the <sequence bi cat doi giua hai khoi van duoc dem dung 1 lan.
+ *
+ * Tra ve -1 neu khong doc duoc file.
+ */
+function countSequencesInXml(path) {
+    var f = new File(path);
+    var count = 0;
+    try {
+        f.encoding = "UTF-8";
+        if (!f.open("r")) return -1;
+        var tail = "";
+        var OVERLAP = 20;
+        while (!f.eof) {
+            var chunk = f.read(1048576);
+            if (chunk === null || chunk === "") break;
+            var buf = tail + chunk;
+            var head, m;
+            if (buf.length > OVERLAP) {
+                head = buf.substr(0, buf.length - OVERLAP);
+                tail = buf.substr(buf.length - OVERLAP);
+            } else {
+                head = ""; tail = buf;
+            }
+            m = head.match(/<sequence[\s>]/g);
+            if (m) count += m.length;
+        }
+        m = tail.match(/<sequence[\s>]/g);
+        if (m) count += m.length;
+        f.close();
+    } catch (e) {
+        try { f.close(); } catch (e2) {}
+        return -1;
+    }
+    return count;
+}
+
+/**
+ * Xuat project dang mo ra file XML (Final Cut Pro 7 XML - xmeml), DAT CANH file
+ * project va TRUNG TEN project.
  * Lay duong dan tu app.project.path roi chi thay duoi mo rong -> chac chan cung
  * thu muc, cung ten, khong phai ghep chuoi thu cong (ten co dau van dung).
  *
  * forceOverwrite = 0 va file da ton tai -> tra ve needConfirm, KHONG ghi de,
  * de panel hoi nguoi dung truoc.
+ *
+ * HAI DUONG XUAT, thu theo thu tu:
+ *   1. sequence.exportAsFinalCutProXML()   -> rieng sequence dang mo.
+ *   2. app.project.exportFinalCutProXML()  -> ca project (nhieu sequence + bin).
+ *
+ * VI SAO DUONG 1 DI TRUOC: hai lenh nay de ra HAI CAU TRUC XML khac nhau.
+ *   Duong 1 -> <xmeml><sequence>                        (timeline nam ngay duoi goc)
+ *   Duong 2 -> <xmeml><project><children><sequence>     (timeline bi boc 2 lop)
+ * Duong 1 chinh la thu Premiere tao ra khi nguoi dung vao File > Export >
+ * Final Cut Pro XML. Nhieu tool doc XMEML ben ngoai (vi du tool chuyen sang
+ * CapCut) chi tim the <sequence> NGAY DUOI <xmeml>, gap cau truc duong 2 la bao
+ * "khong tim thay <sequence>" du file van co timeline day du. Vi vay uu tien
+ * duong 1 de file xuat ra dung dang pho thong nhat.
+ * Duong 2 doi lai duoc ca project (moi sequence + cau truc bin) nen van giu lam
+ * phuong an du phong khi khong co sequence nao dang mo, hoac khi duong 1 hong.
+ *
+ * Sau moi lan xuat deu dem the <sequence trong file; het sequence thi xoa file
+ * do va chuyen sang duong con lai.
  */
 function cep_exportProjectXml(forceOverwrite) {
-    var res = { success: false, path: "", needConfirm: false, size: 0 };
+    var res = { success: false, path: "", needConfirm: false, size: 0, method: "", seqCount: 0, warning: null };
     try {
-        if (!app.project) { res.error = "Ch\u01b0a m\u1edf project n\u00e0o."; return toJson(res); }
+        if (!app.project) { res.error = "Chưa mở project nào."; return toJson(res); }
 
         var projPath = app.project.path;
         if (!projPath || trim(projPath) === "") {
-            res.error = "Project ch\u01b0a \u0111\u01b0\u1ee3c l\u01b0u n\u00ean ch\u01b0a bi\u1ebft \u0111\u1eb7t file XML \u1edf \u0111\u00e2u. H\u00e3y l\u01b0u project (Ctrl+S) r\u1ed3i th\u1eed l\u1ea1i.";
+            res.error = "Project chưa được lưu nên chưa biết đặt file XML ở đâu. Hãy lưu project (Ctrl+S) rồi thử lại.";
             return toJson(res);
         }
 
@@ -1232,26 +1298,82 @@ function cep_exportProjectXml(forceOverwrite) {
         var outFile = new File(outPath);
         if (outFile.exists && !forceOverwrite) { res.needConfirm = true; return toJson(res); }
 
-        // Ten ham co the khac nhau giua cac doi Premiere -> thu lan luot.
-        var called = false;
-        try { app.project.exportFinalCutProXML(outPath, 1); called = true; } catch (e1) {
-            try { app.project.exportFinalCutProXML(outPath); called = true; } catch (e2) {}
-        }
-        if (!called) {
-            res.error = "B\u1ea3n Premiere n\u00e0y kh\u00f4ng h\u1ed7 tr\u1ee3 l\u1ec7nh xu\u1ea5t XML (exportFinalCutProXML).";
+        var activeSeq = null;
+        try { activeSeq = app.project.activeSequence; } catch (eSeq) { activeSeq = null; }
+
+        var numSeq = 0;
+        try { numSeq = app.project.sequences.numSequences || 0; } catch (eNum) { numSeq = 0; }
+        if (numSeq === 0 && !activeSeq) {
+            res.error = "Project này không có sequence nào để xuất.\nHãy mở (hoặc tạo) một sequence trên timeline rồi thử lại.";
             return toJson(res);
         }
 
-        // Khong tin vao gia tri tra ve - kiem tra file that su co tren dia.
-        var check = new File(outPath);
-        if (check.exists && check.length > 0) {
-            res.success = true;
-            res.size = check.length;
-        } else {
-            res.error = "Premiere kh\u00f4ng t\u1ea1o \u0111\u01b0\u1ee3c file XML t\u1ea1i:\n" + outPath;
+        var attempted = false;   // da goi duoc it nhat 1 ham xuat cua Premiere chua
+        var lastErr = "";        // loi cua lan goi gan nhat, de bao khi ca hai duong deu hong
+
+        // ---- Duong 1: xuat rieng sequence dang mo --------------------------
+        if (activeSeq) {
+            try { activeSeq.exportAsFinalCutProXML(outPath); attempted = true; } catch (e1) { lastErr = e1.toString(); }
+
+            var check1 = new File(outPath);
+            if (attempted && check1.exists && check1.length > 0) {
+                var n1 = countSequencesInXml(outPath);
+                // n1 < 0 = khong doc lai duoc file de dem; van coi la xuat duoc 1 sequence.
+                if (n1 !== 0) {
+                    res.success = true;
+                    res.size = check1.length;
+                    res.seqCount = (n1 < 0 ? 1 : n1);
+                    res.method = "sequence";
+                    if (numSeq > 1) {
+                        res.warning = "File XML chỉ chứa sequence đang mở: \"" + (activeSeq.name || "") + "\" " +
+                                      "(project có " + numSeq + " sequence, " + (numSeq - 1) + " cái còn lại không nằm trong file này). " +
+                                      "Muốn xuất sequence khác thì mở nó trên timeline rồi bấm Xuất XML lại.";
+                    }
+                    return toJson(res);
+                }
+                // File co, nhung rong sequence -> bo di de khong de lai file loi.
+                try { check1.remove(); } catch (eDel1) {}
+            }
         }
+
+        // ---- Duong 2: xuat ca project --------------------------------------
+        try { app.project.exportFinalCutProXML(outPath, 1); attempted = true; } catch (e2) {
+            lastErr = e2.toString();
+            try { app.project.exportFinalCutProXML(outPath); attempted = true; } catch (e3) { lastErr = e3.toString(); }
+        }
+
+        if (!attempted) {
+            res.error = "Bản Premiere này không hỗ trợ lệnh xuất XML (exportFinalCutProXML)" +
+                        (lastErr ? ": " + lastErr : ".");
+            return toJson(res);
+        }
+
+        var check = new File(outPath);
+        if (!check.exists || check.length === 0) {
+            res.error = "Premiere không tạo được file XML tại:\n" + outPath;
+            return toJson(res);
+        }
+
+        var n2 = countSequencesInXml(outPath);
+        if (n2 === 0) {
+            res.error = "File XML đã tạo ra nhưng bên trong không có timeline nào, import lại sẽ chỉ thấy các file rời.\n" +
+                        "Thường do sequence chứa thứ mà định dạng Final Cut XML không mô tả được (Motion Graphics/.mogrt, nested sequence, hiệu ứng đặc biệt).\n" +
+                        "Thử tạo một sequence chỉ gồm các clip video/audio thường rồi xuất lại.";
+            return toJson(res);
+        }
+
+        res.success = true;
+        res.size = check.length;
+        res.seqCount = (n2 < 0 ? 1 : n2);
+        res.method = "project";
+        // Canh bao that: file duong 2 co lop boc <project><children> nen mot so tool
+        // ben ngoai (chuyen sang CapCut) se khong tim thay <sequence>.
+        res.warning = (activeSeq
+                        ? "Không xuất riêng được sequence \"" + (activeSeq.name || "") + "\" nên đã xuất cả project."
+                        : "Hiện không có sequence nào đang mở nên đã xuất cả project. Mở sequence trên timeline rồi xuất lại sẽ ra file gọn hơn.") +
+                      "\nFile này có thêm lớp bọc <project>; một số phần mềm chuyển XML sang CapCut sẽ báo \"không tìm thấy <sequence>\".";
     } catch (e) {
-        res.error = "L\u1ed7i xu\u1ea5t XML: " + e.toString();
+        res.error = "Lỗi xuất XML: " + e.toString();
     }
     return toJson(res);
 }

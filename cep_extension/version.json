@@ -1,16 +1,17 @@
 {
-    "version":  "2.1.3",
+    "version":  "2.1.4",
     "notes":  [
-                  "Bản kiểm chứng: cập nhật xong không phải khởi động lại Premiere nữa"
+                  "Sửa lại giao diện",
+                  "Có gì đó mới :v"
               ],
     "files":  [
                   {
                       "path":  "index.html",
-                      "sha256":  "1a899b8fc564c5d20b1c113cac55bd14ababbca6afa857301fd579a35919e658"
+                      "sha256":  "dd0355df392c47a118d21cf17e6c572a3a09a7e882418be752134a2df48503f6"
                   },
                   {
                       "path":  "css/style.css",
-                      "sha256":  "066df767b9fd0ebc92f0508533862336930fb803fcb694261388e21c52c1b5ef"
+                      "sha256":  "7ba0b961a093bd6b07254ebc93ce31bbed6cda3efcf08cc8947d809dfc2d6e1a"
                   },
                   {
                       "path":  "js/CSInterface.js",
@@ -22,11 +23,11 @@
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "2c960177909ed63c19651991732419fe7eab816fc4e80fc1d874a2d2ff1b0dd9"
+                      "sha256":  "94263868d6e9c22ef9cf721495b605e1bf8915bdede4c75719f3360ee02607ba"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "ff704dfaea01d5e8e53aad9060979d6544eceb8dc83e23b8733ad9696ece5bcf"
+                      "sha256":  "f3f3be309e71e17b3a672d8a551ba283e50840ddd2314b116097ae5fa9ac7138"
                   },
                   {
                       "path":  "sound/done.mp3",

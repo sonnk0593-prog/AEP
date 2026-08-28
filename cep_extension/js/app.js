@@ -10,7 +10,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "2.1.3";
+var APP_VERSION = "2.1.4";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -391,6 +391,8 @@ var dom = {
     ,mediaCheckClose: document.getElementById("mediaCheckClose")
     ,mediaCheckStart: document.getElementById("mediaCheckStart")
     ,logToggle: document.getElementById("logToggle")
+    ,configCard: document.getElementById("configCard")
+    ,configToggle: document.getElementById("configToggle")
 };
 
 // =========================================================================
@@ -990,7 +992,7 @@ function setupEventListeners() {
     dom.btnStart.addEventListener("click", function () {
         if (state.scriptValidated) startImportProcess();
     });
-    dom.btnCancel.addEventListener("click", cancelImportProcess);
+    dom.btnCancel.addEventListener("click", cancelCurrentProcess);
     if (dom.btnCopyRelink) dom.btnCopyRelink.addEventListener("click", copyAndRelinkFootage);
     if (dom.btnExportXml) dom.btnExportXml.addEventListener("click", function () { exportProjectXml(false); });
     if (dom.btnOpenXmlDir) dom.btnOpenXmlDir.addEventListener("click", openXmlFolder);
@@ -1003,6 +1005,19 @@ function setupEventListeners() {
         state.logExpanded = !state.logExpanded;
         updateLogVisibility();
     });
+    if (dom.configToggle && dom.configCard) {
+        // Bam vao CA thanh tieu de, khong chi rieng chu "Mo rong": CSS da de con
+        // tro hinh ban tay tren ca thanh nay (.config-header { cursor: pointer })
+        // nen nguoi dung se bam vao chu "Cau hinh dung" truoc.
+        // Chi gan MOT listener - o thanh. Click tu nut con noi len day, gan ca hai
+        // cho se lam mo roi dong lai ngay lap tuc.
+        var configHeader = dom.configCard.querySelector(".config-header") || dom.configToggle;
+        configHeader.addEventListener("click", function () {
+            var collapsed = dom.configCard.classList.toggle("collapsed");
+            dom.configToggle.textContent = collapsed ? "Mở rộng" : "Thu gọn";
+            dom.configToggle.title = collapsed ? "Mở rộng" : "Thu gọn";
+        });
+    }
 
     dom.txtGSheetUrl.addEventListener("keydown", function (e) {
         if (e.key === "Enter") {
@@ -1022,10 +1037,9 @@ function setupEventListeners() {
 }
 
 function handleLoadCheckButton() {
-    if (state.checkInProgress) {
-        cancelImportProcess();
-        return;
-    }
+    // Nut nay KHONG con kiem nhiem viec dung nua - viec dung da don ve nut Dung
+    // duy nhat trong Progress Card. Dang chay thi bam vao day khong lam gi ca.
+    if (state.checkInProgress) return;
     handleStartClick();
 }
 
@@ -1152,10 +1166,8 @@ function resetScriptForUrlChange() {
         dom.btnStart.disabled = true;
         dom.btnStart.innerHTML = "<span>✂️ Bắt đầu cắt</span>";
     }
-    if (dom.btnLoadCheck) {
-        dom.btnLoadCheck.disabled = false;
-        dom.btnLoadCheck.innerHTML = "<span>📥 Tải &amp; kiểm tra kịch bản</span>";
-    }
+    resetLoadCheckButton();
+    showStopButton(false);
     if (dom.progressCard) dom.progressCard.style.display = "none";
     if (dom.mediaCheckPanel) { dom.mediaCheckPanel.classList.remove("visible"); dom.mediaCheckPanel.classList.remove("collapsed"); }
 }
@@ -1179,10 +1191,10 @@ function startFromSheetUrl() {
     state.checkCancelled = false;
     state.checkInProgress = true;
     if (dom.btnLoadCheck) {
-        dom.btnLoadCheck.disabled = false;
-        dom.btnLoadCheck.innerHTML = "<span>⏹️ Dừng tải &amp; kiểm tra</span>";
+        dom.btnLoadCheck.disabled = true;
+        dom.btnLoadCheck.innerHTML = "<span>⏳ Đang tải kịch bản…</span>";
     }
-    dom.btnCancel.style.display = "none";
+    showStopButton(true);
 
     hideToast();
     dom.btnStart.disabled = true;
@@ -1385,7 +1397,7 @@ function resetStartButton() {
     dom.btnStart.disabled = !state.scriptValidated;
     dom.btnStart.style.display = "inline-flex";
     dom.btnStart.innerHTML = "<span>✂️ Bắt đầu cắt</span>";
-    dom.btnCancel.style.display = "none";
+    showStopButton(false);
 }
 
 function scriptLoadedForCheck() {
@@ -1394,7 +1406,8 @@ function scriptLoadedForCheck() {
     dom.btnStart.disabled = true;
     dom.btnStart.style.display = "inline-flex";
     dom.btnStart.innerHTML = "<span>✂️ Bắt đầu cắt</span>";
-    if (dom.btnLoadCheck) { dom.btnLoadCheck.disabled = false; dom.btnLoadCheck.innerHTML = "<span>⏹️ Dừng Gemini &amp; kiểm tra</span>"; }
+    if (dom.btnLoadCheck) { dom.btnLoadCheck.disabled = true; dom.btnLoadCheck.innerHTML = "<span>⏳ Đang chuẩn hoá bằng AI…</span>"; }
+    showStopButton(true);
     csInterface.evalScript("cep_clearSourceReplacements()", function () {
         if (state.checkCancelled) return;
         if (!GeminiAPI.hasKey()) {
@@ -1409,7 +1422,8 @@ function scriptLoadedForCheck() {
 function normalizeScriptWithGemini() {
     if (state.checkCancelled) return;
     dom.btnLoadCheck.disabled = true;
-    dom.btnLoadCheck.innerHTML = "<span>⏹️ Dừng Gemini đang chuẩn hóa</span>";
+    dom.btnLoadCheck.innerHTML = "<span>⏳ Gemini đang chuẩn hoá…</span>";
+    showStopButton(true);
     startCheckProgress("Gemini đang chuẩn hóa timecode và đường dẫn...", 12, 62);
     GeminiAPI.normalizeScript(state.csvContent, state.parsedData.cols).then(function (edits) {
         if (state.checkCancelled) return;
@@ -1452,18 +1466,17 @@ function toggleMediaCheck() {
 function validateScriptSources() {
     if (!state.parsedData || state.isRunning || state.checkCancelled) return;
     dom.btnLoadCheck.disabled = true;
-    dom.btnLoadCheck.innerHTML = "<span>⏹️ Dừng kiểm tra media</span>";
+    dom.btnLoadCheck.innerHTML = "<span>⏳ Đang kiểm tra media…</span>";
+    showStopButton(true);
     if (!state.checkProgressTimer) startCheckProgress("Đang kiểm tra đường dẫn và mã file...", 68, 94);
     var payload = { csvContent: state.csvContent, cols: state.parsedData.cols, enableTram: true };
     evalJson("cep_validateSources(" + toEscapedJson(JSON.stringify(payload)) + ")", function (res, err) {
         if (state.checkCancelled) return;
-        dom.btnLoadCheck.disabled = false;
-        dom.btnLoadCheck.innerHTML = "<span>📥 Tải &amp; kiểm tra kịch bản</span>";
+        resetLoadCheckButton();
         if (err || !res || !res.success) {
             stopCheckProgress();
             state.checkInProgress = false;
-            dom.btnLoadCheck.disabled = false;
-            dom.btnLoadCheck.innerHTML = "<span>📥 Tải &amp; kiểm tra kịch bản</span>";
+            showStopButton(false);
             addLog("error", "Kiểm tra media thất bại: " + (err || (res && res.error) || "Lỗi không xác định"));
             showAlert("Không kiểm tra được media", escapeHtml(String(err || (res && res.error) || "Lỗi không xác định")), "error");
             return;
@@ -1498,22 +1511,89 @@ function stopCheckProgress() {
     state.checkProgressTimer = null;
 }
 
+/**
+ * Gom cac dong CUNG MOT FILE lai thanh nhom.
+ *
+ * Kich ban hay cat mot video thanh nhieu doan -> nhieu dong tren Google Sheet
+ * nhung ban chat van la MOT file. Truoc day moi dong dem thanh mot file, nen mot
+ * file thieu ma dung o 3 dong thi bao "thieu 3 file" - sai va lam nguoi dung
+ * tuong phai di tim 3 file khac nhau.
+ *
+ * checkKey do hostscript sinh ra tu (thu muc + ten file) da chuan hoa, chinh la
+ * danh tinh cua file. Trung checkKey = trung file.
+ * Giu nguyen thu tu xuat hien dau tien de danh sach khong bi xao tron.
+ */
+function groupMediaItems(items) {
+    var order = [];
+    var map = {};
+    items.forEach(function (item) {
+        // Them tien to de khoa khong dung ten thuoc tinh co san cua Object
+        // (vi du mot file ten "constructor" se lam map[key] tra ve ham dung).
+        var key = "k_" + (item.checkKey || item.id);
+        if (!map[key]) {
+            map[key] = { items: [], found: true };
+            order.push(map[key]);
+        }
+        map[key].items.push(item);
+        if (!item.found) map[key].found = false;
+    });
+    return order;
+}
+
+/** Phan ruot chung cua mot dong: tieu de dong + o duong dan + o ten file. */
+function mediaRowMain(item) {
+    return '<div class="media-check-main"><strong>Dòng ' + item.rowNumber + ' · ' + escapeHtml(item.kind) + '</strong>' +
+        '<div class="media-check-field"><span>Đường dẫn</span><input readonly value="' + escapeHtml(item.displayFolder || "(đường dẫn đầy đủ)") + '"><button class="btn-copy-media" data-copy-value="' + escapeHtml(item.displayFolder || "") + '" title="Copy đường dẫn">⧉</button></div>' +
+        '<div class="media-check-field"><span>Tên file</span><input readonly value="' + escapeHtml(item.displayName || item.code || "") + '"><button class="btn-copy-media" data-copy-value="' + escapeHtml(item.displayName || item.code || "") + '" title="Copy tên file">⧉</button></div></div>';
+}
+
+/**
+ * Ve mot nhom. Nhom 1 dong thi ve y het kieu cu (khong ve dau ngoac cho roi mat).
+ * Nhom nhieu dong thi boc trong dau ngoac "{" va CHI co mot nut Tim & thay the:
+ * cep_setSourceReplacement luu theo (thu muc + ten file) nen thay mot lan la ca
+ * nhom duoc thay, khong can bam lai tung dong.
+ */
+function renderMediaGroup(group) {
+    var status = group.found ? "check-found" : "check-not-found";
+    var label = group.found ? "✓ Đã tìm thấy" : "✕ Không tìm thấy";
+    var first = group.items[0];
+    var many = group.items.length > 1;
+    var action = group.found ? "" :
+        '<button class="btn-find-media" data-media-id="' + escapeHtml(first.id) + '">🔎 Tìm &amp; thay thế' +
+        (many ? " (cả " + group.items.length + " dòng)" : "") + '</button>';
+
+    if (!many) {
+        return '<div class="media-check-row ' + status + '">' + mediaRowMain(first) +
+            '<span class="media-check-status">' + label + '</span>' + action + '</div>';
+    }
+
+    var rowNumbers = group.items.map(function (item) { return item.rowNumber; }).join(", ");
+    var rows = group.items.map(function (item) {
+        return '<div class="media-check-row ' + status + ' is-grouped">' + mediaRowMain(item) + '</div>';
+    }).join("");
+
+    return '<div class="media-group ' + status + '">' +
+            '<div class="media-group-brace" aria-hidden="true"></div>' +
+            '<div class="media-group-body">' +
+                '<div class="media-group-head">🔗 Cùng 1 file · dùng ở ' + group.items.length + ' dòng: ' + rowNumbers + '</div>' +
+                rows +
+                '<div class="media-group-foot"><span class="media-check-status">' + label + '</span>' + action + '</div>' +
+            '</div>' +
+        '</div>';
+}
+
 function renderMediaCheck(items) {
-    var missing = items.filter(function (item) { return !item.found; }).length;
-    dom.mediaCheckSummary.innerHTML = "Đã kiểm tra <strong>" + items.length + "</strong> file: " +
-        "<span class=\"check-ok\">" + (items.length - missing) + " tìm thấy</span>, " +
+    // Dem theo FILE chu khong theo dong: 1 file cat lam 3 doan van la 1 file.
+    var groups = groupMediaItems(items);
+    var totalFiles = groups.length;
+    var missing = groups.filter(function (group) { return !group.found; }).length;
+
+    dom.mediaCheckSummary.innerHTML = "Đã kiểm tra <strong>" + totalFiles + "</strong> file" +
+        (items.length > totalFiles ? " (" + items.length + " dòng)" : "") + ": " +
+        "<span class=\"check-ok\">" + (totalFiles - missing) + " tìm thấy</span>, " +
         "<span class=\"check-missing\">" + missing + " chưa tìm thấy</span>.";
     if (!items.length) dom.mediaCheckList.innerHTML = '<div class="log-empty">Không có file media hợp lệ trong dữ liệu.</div>';
-    else dom.mediaCheckList.innerHTML = items.map(function (item) {
-        var status = item.found ? "check-found" : "check-not-found";
-        var label = item.found ? "✓ Đã tìm thấy" : "✕ Không tìm thấy";
-        var action = item.found ? "" : '<button class="btn-find-media" data-media-id="' + escapeHtml(item.id) + '">🔎 Tìm &amp; thay thế</button>';
-        return '<div class="media-check-row ' + status + '">' +
-            '<div class="media-check-main"><strong>Dòng ' + item.rowNumber + ' · ' + escapeHtml(item.kind) + '</strong>' +
-                '<div class="media-check-field"><span>Đường dẫn</span><input readonly value="' + escapeHtml(item.displayFolder || "(đường dẫn đầy đủ)") + '"><button class="btn-copy-media" data-copy-value="' + escapeHtml(item.displayFolder || "") + '" title="Copy đường dẫn">⧉</button></div>' +
-                '<div class="media-check-field"><span>Tên file</span><input readonly value="' + escapeHtml(item.displayName || item.code || "") + '"><button class="btn-copy-media" data-copy-value="' + escapeHtml(item.displayName || item.code || "") + '" title="Copy tên file">⧉</button></div></div>' +
-            '<span class="media-check-status">' + label + '</span>' + action + '</div>';
-    }).join("");
+    else dom.mediaCheckList.innerHTML = groups.map(renderMediaGroup).join("");
     Array.prototype.forEach.call(dom.mediaCheckList.querySelectorAll(".btn-find-media"), function (button) {
         button.addEventListener("click", function () { chooseMediaReplacement(items, button.getAttribute("data-media-id")); });
     });
@@ -1529,16 +1609,15 @@ function renderMediaCheck(items) {
     dom.mediaCheckPanel.classList.remove("collapsed"); // ket qua moi -> luon mo san
     dom.mediaCheckClose.textContent = "Thu gọn";
     dom.mediaCheckClose.title = "Thu gọn";
-    dom.btnCancel.style.display = "none";
-    dom.btnCancel.disabled = false;
+    showStopButton(false);
     state.checkInProgress = false;
-    dom.btnLoadCheck.disabled = false;
-    dom.btnLoadCheck.innerHTML = "<span>📥 Tải &amp; kiểm tra kịch bản</span>";
+    resetLoadCheckButton();
     dom.progressBarFill.style.width = "100%";
     dom.progressPercent.textContent = "100%";
     dom.progressStepText.textContent = "Đã kiểm tra kịch bản";
     dom.btnStart.innerHTML = "<span>✂️ Bắt đầu cắt</span>";
-    addLog(missing ? "warning" : "success", "Kiểm tra media: " + (items.length - missing) + "/" + items.length + " file tìm thấy.");
+    addLog(missing ? "warning" : "success", "Kiểm tra media: " + (totalFiles - missing) + "/" + totalFiles + " file tìm thấy" +
+        (items.length > totalFiles ? (" (" + items.length + " dòng dùng chung các file này).") : "."));
 }
 
 function chooseMediaReplacement(items, id) {
@@ -1594,8 +1673,12 @@ function startImportProcess() {
     state.aiClipNames = {};
     resetStats();
 
-    dom.btnStart.style.display = "none";
-    dom.btnCancel.style.display = "inline-flex";
+    // Nut 2 o lai cho cu nhung khoa lai va doi chu - truoc day no bi AN DI va thay
+    // bang nut do "Dung lai", lam ba nut chinh nhay cho moi lan chay.
+    dom.btnStart.disabled = true;
+    dom.btnStart.style.display = "inline-flex";
+    dom.btnStart.innerHTML = "<span>⏳ Đang cắt…</span>";
+    showStopButton(true);
     dom.progressCard.style.display = "block";
 
     var config = {
@@ -1742,17 +1825,66 @@ function handleRowResult(rowNumber, res) {
     }
 }
 
-function cancelImportProcess() {
-    if (!state.isRunning) {
+// =========================================================================
+// NUT DUNG DUY NHAT
+// =========================================================================
+
+/**
+ * Bat/tat nut Dung trong Progress Card.
+ * Goi showStopButton(true) khi bat dau mot viec chay dai, va (false) khi viec do
+ * ket thuc - du la xong, loi hay bi dung giua chung. Ham nay luon tra nut ve
+ * trang thai bam duoc, khong can don dep rieng o cho goi.
+ */
+function showStopButton(show) {
+    if (!dom.btnCancel) return;
+    dom.btnCancel.style.display = show ? "inline-flex" : "none";
+    dom.btnCancel.disabled = false;
+    dom.btnCancel.innerHTML = "<span>⏹️ Dừng</span>";
+}
+
+/** Chuyen nut Dung sang trang thai "da bam roi, dang cho dung". */
+function markStopping(message) {
+    if (dom.btnCancel) {
+        dom.btnCancel.disabled = true;
+        dom.btnCancel.innerHTML = "<span>⏳ Đang dừng…</span>";
+    }
+    if (dom.currentActionText) dom.currentActionText.textContent = message;
+}
+
+/** Tra nut "Tải & kiểm tra kịch bản" ve chu goc, bam duoc. */
+function resetLoadCheckButton() {
+    if (!dom.btnLoadCheck) return;
+    dom.btnLoadCheck.disabled = false;
+    dom.btnLoadCheck.innerHTML = "<span>📥 Tải &amp; kiểm tra kịch bản</span>";
+}
+
+/**
+ * MOT nut dung cho ca ba viec. Thu tu kiem tra di tu viec "nang" nhat xuong.
+ *
+ * Copy & Relink va Import & Cat deu chay theo tung file / tung dong, nen chi can
+ * dat co roi de vong lap tu dung o buoc ke tiep - KHONG cat ngang giua chung
+ * duoc, vi ExtendScript dang copy file hoac chen clip thi Premiere bi khoa.
+ * Rieng Tai & kiem tra la cho ket qua tra ve nen cat ngay duoc.
+ */
+function cancelCurrentProcess() {
+    if (state.relink) {
+        state.relink.cancelled = true;
+        markStopping("Đang dừng — đợi copy xong file hiện tại…");
+        addLog("info", "Đã yêu cầu dừng Copy & Relink Footage.");
+        return;
+    }
+    if (state.isRunning) {
+        state.shouldCancel = true;
+        markStopping("Đang dừng — đợi xong dòng hiện tại…");
+        addLog("info", "Đã yêu cầu dừng Import & Cắt.");
+        return;
+    }
+    if (state.checkInProgress) {
         state.checkCancelled = true;
         state.checkInProgress = false;
         stopCheckProgress();
-        dom.btnCancel.style.display = "none";
-        dom.btnCancel.disabled = true;
-        if (dom.btnLoadCheck) {
-            dom.btnLoadCheck.disabled = false;
-            dom.btnLoadCheck.innerHTML = "<span>📥 Tải &amp; kiểm tra kịch bản</span>";
-        }
+        showStopButton(false);
+        resetLoadCheckButton();
         if (dom.btnStart) {
             dom.btnStart.disabled = true;
             dom.btnStart.innerHTML = "<span>✂️ Bắt đầu cắt</span>";
@@ -1761,9 +1893,8 @@ function cancelImportProcess() {
         addLog("info", "Đã dừng tải & kiểm tra kịch bản theo yêu cầu.");
         return;
     }
-    state.shouldCancel = true;
-    dom.btnCancel.disabled = true;
-    dom.currentActionText.textContent = "Đang dừng...";
+    // Khong co viec nao chay ma nut van hien -> tu an di cho sach.
+    showStopButton(false);
 }
 
 function finishProcess(message) {
@@ -1861,7 +1992,7 @@ function renderXmlButtons(busy) {
         } else {
             btn.className = "btn-mini";
             btn.innerHTML = "<span>📄 Xuất XML</span>";
-            btn.title = "Xuất project đang mở ra file XML, đặt cùng thư mục và cùng tên với project";
+            btn.title = "Xuất sequence đang mở ra file XML, đặt cùng thư mục và cùng tên với project";
         }
     }
     if (open) {
@@ -1908,7 +2039,11 @@ function exportProjectXml(force) {
             state.lastXmlPath = res.path;
             renderXmlButtons(false);
             var kb = Math.max(1, Math.round((res.size || 0) / 1024));
-            addLog("success", "Đã xuất XML: " + res.path + " (" + kb + " KB)");
+            // seqCount do hostscript đếm trực tiếp trong file XML - đây là bằng chứng
+            // file thật sự có timeline, không phải chỉ có danh sách clip rời.
+            var seqInfo = res.seqCount ? (", " + res.seqCount + " sequence") : "";
+            addLog("success", "Đã xuất XML: " + res.path + " (" + kb + " KB" + seqInfo + ")");
+            if (res.warning) addLog("warning", res.warning);
             showToast("Đã xuất XML", res.path);
         });
     });
@@ -2021,7 +2156,8 @@ function runCopyAndRelink() {
                 copied: 0, relinked: 0, failed: 0,
                 skipCount: res.skipCount || 0,
                 footagePath: res.footagePath,
-                errors: []
+                errors: [],
+                cancelled: false   // nut Dung dat co nay, relinkNextFile doc no
             };
             state.copyPlan = { totalBytes: totalBytes, doneBytes: 0 };
             state.copiedBytes = 0;
@@ -2029,6 +2165,9 @@ function runCopyAndRelink() {
             addLog("info", "Tìm thấy " + files.length + " file cần copy (" + (res.skipCount || 0) + " file đã có trong Footage/)" +
                            (totalBytes > 0 ? (" — tổng " + formatBytes(totalBytes)) : "") + ".");
             startCopyMonitor();
+            // Chi bat nut Dung tu day: buoc quet Timeline o tren la mot lenh
+            // ExtendScript chay lien mach, co bam cung khong cat ngang duoc.
+            showStopButton(true);
             relinkNextFile();
         });
     });
@@ -2038,9 +2177,16 @@ function relinkNextFile() {
     var st = state.relink;
     if (!st) return;
 
+    // Nguoi dung bam Dung: khong bat dau file ke tiep nua. File dang copy dở thì
+    // vẫn để nó copy xong (Premiere dang bi khoa, cat ngang se de lai file hong).
+    if (st.cancelled) {
+        finishRelink(true);
+        return;
+    }
+
     var total = st.files.length;
     if (st.idx >= total) {
-        finishRelink();
+        finishRelink(false);
         return;
     }
 
@@ -2082,15 +2228,31 @@ function relinkNextFile() {
     }, 30);
 }
 
-function finishRelink() {
+function finishRelink(cancelled) {
     var st = state.relink;
     CopyMonitor.stop();
     state.copyPlan = null;
+    showStopButton(false);
+    setRelinkBusy(false);
+
+    if (cancelled) {
+        // Giu nguyen % dang co - keo len 100% se lam tuong la da copy het.
+        dom.progressStepText.textContent = "Đã dừng Copy & Relink";
+        dom.currentActionText.textContent = "Đã dừng ở file " + st.idx + "/" + st.files.length +
+                                            " — đã copy " + st.copied + " file, relink " + st.relinked + " source.";
+        addLog("info", "--- COPY & RELINK (đã dừng): copy " + st.copied + "/" + st.files.length +
+                       " file | relink " + st.relinked + " source | lỗi " + st.failed + " ---");
+        showToast("Đã dừng Copy & Relink",
+                  "Dừng ở file " + st.idx + "/" + st.files.length + ". Bấm lại nút Copy & Relink để chạy tiếp phần còn lại.",
+                  true);
+        state.relink = null;
+        return;
+    }
+
     dom.progressBarFill.style.width = "100%";
     dom.progressPercent.textContent = "100%";
     dom.progressStepText.textContent = "Hoàn thành Copy & Relink";
     dom.currentActionText.textContent = "Đã copy " + st.copied + " file, relink " + st.relinked + " source.";
-    setRelinkBusy(false);
 
     addLog("info", "--- COPY & RELINK: copy " + st.copied + " file | relink " + st.relinked + " source | bỏ qua " + st.skipCount + " file đã có | lỗi " + st.failed + " ---");
     notifyDone("Đã xong Copy & Relink!",
