@@ -1,8 +1,8 @@
 {
-    "version":  "2.1.6",
+    "version":  "2.1.7",
     "notes":  [
-                  "Cập nhật và tối ưu hiệu năng",
-                  "Cải tiến xử lý Footage và sửa lỗi phát sinh"
+                  "Sửa lỗi thứ tự và đè clip trám V2 khi không có source chính V1",
+                  "Tự động để trống track V1 và chèn trám V2 tuần tự từ trái qua phải theo kịch bản"
               ],
     "files":  [
                   {
@@ -23,11 +23,11 @@
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "2adefed61067cc34a43cc0ade2654e72cd6934c2cfcf654d05126261df097583"
+                      "sha256":  "d4fdbf751e9ef6409168869155eab7c989885aff44adfe6344c1f405d41fb5d1"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "8e778542c2dc72f54490b97550c5d23f58dbb12f220fcc3dd7369ae41f607b2a"
+                      "sha256":  "0b81a89e16305ad6d55356334532b6995937e2b1e334c28c34b481a90e719d44"
                   },
                   {
                       "path":  "sound/done.mp3",

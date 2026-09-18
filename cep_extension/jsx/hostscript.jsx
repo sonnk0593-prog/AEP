@@ -21,7 +21,7 @@
 // ghi de ham cua panel nap truoc. Panel doi chieu bien nay de biet script dang
 // chay co dung cua no khong.
 // ============================================================================
-var IMPORTCUT_VERSION = "2.1.6";
+var IMPORTCUT_VERSION = "2.1.7";
 
 var TICKS_PER_SECOND = 254016000000;
 var MEDIA_TYPE = 4;
@@ -41,6 +41,7 @@ var _session = {
     lastTramFolder: "",
     replacements: {},
     missingSources: {},
+    timelineCursorSec: null,
     config: {}
 };
 
@@ -1572,6 +1573,7 @@ function cep_initSession(configJsonStr) {
     _session.active = true;
     _session.fileCache = {}; _session.itemCache = {}; _session.durationCache = {};
     _session.lastBody = ""; _session.lastSourceFolder = ""; _session.lastFileCode = ""; _session.lastTramFolder = "";
+    _session.timelineCursorSec = null;
     var footageFolder = null;
     if (config.enableCopyToLocal !== false) footageFolder = getOrCreateFootageFolder(config.footageFolderName || "Footage");
     _session.footageFolder = footageFolder;
@@ -1689,7 +1691,15 @@ function cep_processSingleRow(rowJsonStr) {
     var allTimeRanges = parseAllTimeRanges(timeRaw);
     if (allTimeRanges === null) return toJson({ status: "skipped", rowNumber: rowNumber, details: "B\u1ecf qua d\u00f2ng N.A", clipCount: 0, copyCount: 0, downloadCount: 0 });
 
-    var v1StartTime = getTrackEndSeconds(mainTrack);
+    var currentMainEnd = getTrackEndSeconds(mainTrack);
+    var currentTramEnd = (tramTrack ? getTrackEndSeconds(tramTrack) : 0);
+    if (_session.timelineCursorSec === null) {
+        _session.timelineCursorSec = Math.max(currentMainEnd, currentTramEnd);
+    } else {
+        _session.timelineCursorSec = Math.max(_session.timelineCursorSec, Math.max(currentMainEnd, currentTramEnd));
+    }
+    var rowStartTime = _session.timelineCursorSec;
+
     var clipsInserted = 0, copiesDone = 0, downloadsDone = 0;
     var warnings = [], actions = [];
     var v1ClipDuration = 0; // Will be set after inserting V1 clip
@@ -1723,44 +1733,44 @@ function cep_processSingleRow(rowJsonStr) {
 
             if (isEnvatoUrl(currentUrl) || isYouTubeUrl(currentUrl)) {
                 var blackItem = getOrCreateBlackVideoItem(_session.footageFolder);
-                if (!blackItem) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Kh\u00f4ng t\u1ea1o \u0111\u01b0\u1ee3c Black Video" });
+                if (!blackItem) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Không tạo được Black Video" });
                 try {
                     blackItem.setInPoint("0", MEDIA_TYPE);
                     blackItem.setOutPoint(Math.round(clipDur * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
-                    var insertPosB = getTrackEndSeconds(mainTrack);
+                    var insertPosB = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
                     var resB = insertAndRenameClip(mainTrack, blackItem, insertPosB, clipLabel, clipDur, urlRange.mode !== "full");
                     if (resB.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: resB.error });
                     if (resB.warning) warnings.push(resB.warning);
                     clipsInserted++; v1ClipDuration = clipDur;
                     actions.push("Black Video " + (clipLabel || rowNumber));
-                } catch(eB) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "L\u1ed7i ch\u00e8n Black Video: " + eB.toString() }); }
+                } catch(eB) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Lỗi chèn Black Video: " + eB.toString() }); }
             } else {
                 var ext = getExtensionFromUrl(currentUrl);
                 var localFileName = rowNumber + subSuffix + "." + ext;
                 var folderFs = _session.footageFolder ? _session.footageFolder.fsName : (new File(app.project.path).parent.fsName);
                 var localDestPath = folderFs + "/" + localFileName;
                 var downloadedFile = downloadFileFromUrl(currentUrl, localDestPath);
-                if (!downloadedFile) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Kh\u00f4ng t\u1ea3i \u0111\u01b0\u1ee3c file t\u1eeb link: " + currentUrl });
+                if (!downloadedFile) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Không tải được file từ link: " + currentUrl });
                 downloadsDone++;
                 var mediaItem = importAndGetProjectItem(downloadedFile.fsName);
-                if (!mediaItem) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Import th\u1ea5t b\u1ea1i: " + downloadedFile.fsName });
+                if (!mediaItem) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Import thất bại: " + downloadedFile.fsName });
                 try {
                     mediaItem.setInPoint("0", MEDIA_TYPE);
                     mediaItem.setOutPoint(Math.round(clipDur * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
-                    var insertPosM = getTrackEndSeconds(mainTrack);
+                    var insertPosM = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
                     var resM = insertAndRenameClip(mainTrack, mediaItem, insertPosM, clipLabel, clipDur, urlRange.mode !== "full");
                     if (resM.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: resM.error });
                     if (resM.warning) warnings.push(resM.warning);
                     clipsInserted++; v1ClipDuration = clipDur;
-                    actions.push("\u0110\u00e3 t\u1ea3i " + localFileName + " (" + clipDur + "s)");
-                } catch(eM) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "L\u1ed7i ch\u00e8n media: " + eM.toString() }); }
+                    actions.push("Đã tải " + localFileName + " (" + clipDur + "s)");
+                } catch(eM) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Lỗi chèn media: " + eM.toString() }); }
             }
         }
     } else if (hasExplicitV1) {
         // ---- NAS / local file path — carry-forward chỉ khi hàng có ít nhất source/code/time ----
         var sourceToUse = _session.lastSourceFolder;
         var codeToUse = _session.lastFileCode;
-        if (codeToUse === "") return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Thi\u1ebfu Source ho\u1eb7c m\u00e3 file" });
+        if (codeToUse === "") return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Thiếu Source hoặc mã file" });
 
         // O file co the la DUONG DAN DAY DU (mot hoac nhieu dong) -> khong tach theo dau phay
         // vi ten thu muc co the chua dau phay; khi do khong can cot thu muc rieng.
@@ -1784,14 +1794,14 @@ function cep_processSingleRow(rowJsonStr) {
             }
         }
         if (fileCodes.length === 0) fileCodes = [codeToUse];
-        if (sourceToUse === "" && !anyFullPath) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Thi\u1ebfu Source ho\u1eb7c m\u00e3 file" });
+        if (sourceToUse === "" && !anyFullPath) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Thiếu Source hoặc mã file" });
 
         for (var fIdx = 0; fIdx < fileCodes.length; fIdx++) {
             var currentCode = fileCodes[fIdx];
             var mainResult = resolveAndImport(sourceToUse, currentCode, _session.fileCache, _session.itemCache, _session.footageFolder, enableCopy);
             if (mainResult.skip) { warnings.push("Bỏ qua file không tìm thấy: " + currentCode); continue; }
             if (mainResult.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: mainResult.error });
-            if (mainResult.isAmbiguous) warnings.push("M\u00e3 '" + currentCode + "' kh\u1edbp nhi\u1ec1u file, \u0111ang d\u00f9ng: " + mainResult.matchedPath);
+            if (mainResult.isAmbiguous) warnings.push("Mã '" + currentCode + "' khớp nhiều file, đang dùng: " + mainResult.matchedPath);
             if (mainResult.isNewCopy) copiesDone++;
 
             // --- Lặp qua tất cả time ranges của dòng (hỗ trợ multiline timecode) ---
@@ -1826,7 +1836,7 @@ function cep_processSingleRow(rowJsonStr) {
                 }
                 else {
                     if (noTimecodeMode === "full" && mainDuration !== null && mainDuration > 0) { inSec = 0; outSec = mainDuration; }
-                    else if (mainDuration === null || mainDuration <= 0) { inSec = 0; outSec = noTimecodeDuration; warnings.push("Kh\u00f4ng \u0111\u1ecdc \u0111\u01b0\u1ee3c th\u1eddi l\u01b0\u1ee3ng " + currentCode + ", l\u1ea5y " + noTimecodeDuration + "s"); }
+                    else if (mainDuration === null || mainDuration <= 0) { inSec = 0; outSec = noTimecodeDuration; warnings.push("Không đọc được thời lượng " + currentCode + ", lấy " + noTimecodeDuration + "s"); }
                     else if (mainDuration <= noTimecodeDuration) { inSec = 0; outSec = mainDuration; }
                     else { var mid = mainDuration/2; inSec = mid - noTimecodeDuration/2; outSec = mid + noTimecodeDuration/2; }
                 }
@@ -1836,13 +1846,13 @@ function cep_processSingleRow(rowJsonStr) {
                     waitForMediaReady(mainResult.projectItem, 6000);
                     mainResult.projectItem.setInPoint(Math.round(inSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
                     mainResult.projectItem.setOutPoint(Math.round(outSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
-                    var insertPosV = getTrackEndSeconds(mainTrack);
+                    var insertPosV = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
                     var resV = insertAndRenameClip(mainTrack, mainResult.projectItem, insertPosV, clipLabel, outSec - inSec, timeRangeInfo.mode !== "full");
                     if (resV.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: resV.error });
                     if (resV.warning) warnings.push(resV.warning);
                     clipsInserted++; v1ClipDuration += (outSec - inSec);
                     actions.push("V1 " + (clipLabel || currentCode) + " (" + inSec.toFixed(0) + "s~" + outSec.toFixed(0) + "s)");
-                } catch(eInsert) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "L\u1ed7i ch\u00e8n clip V1: " + eInsert.toString() }); }
+                } catch(eInsert) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Lỗi chèn clip V1: " + eInsert.toString() }); }
             }
         }
     }
@@ -1850,7 +1860,8 @@ function cep_processSingleRow(rowJsonStr) {
     // =========================================================================
     // 2. SOURCE TRAM (V2)
     //    - Only insert if THIS row has explicit tram code or tram URL
-    //    - Duration capped at v1ClipDuration so tram never overflows V1 boundary
+    //    - If V1 exists in this row, tram duration capped at remaining V1 boundary
+    //    - If V1 is empty (tram-only row), tram inserts sequentially and advances timeline cursor
     // =========================================================================
     var tramInserted = 0;
     var tramUrls = extractUrls(tramSourceRaw + "\n" + tramCodeRaw);
@@ -1858,10 +1869,14 @@ function cep_processSingleRow(rowJsonStr) {
 
     if (enableTram && tramTrack && hasTramExplicit) {
         var tramTimeInfo = parseTimeRange(tramTimeRaw);
+        var tramInsertPos = rowStartTime;
 
-        // Helper to cap tram duration at V1 clip length
+        // Helper to cap tram duration at V1 clip length IF V1 exists in this row
         function getTramDur(requestedDur) {
-            if (v1ClipDuration > 0 && requestedDur > v1ClipDuration) return v1ClipDuration;
+            if (v1ClipDuration > 0) {
+                var remainingV1 = Math.max(0, (rowStartTime + v1ClipDuration) - tramInsertPos);
+                return Math.min(requestedDur, remainingV1);
+            }
             return requestedDur;
         }
 
@@ -1873,14 +1888,23 @@ function cep_processSingleRow(rowJsonStr) {
                 var tClipDurRaw = (tramTimeInfo.mode === "full") ? (tramTimeInfo.outSec - tramTimeInfo.inSec) : defaultDuration;
                 var tClipDur = getTramDur(tClipDurRaw);
 
+                if (v1ClipDuration > 0 && tClipDur <= 0.05) {
+                    warnings.push("Trám link " + tUrl + ": vượt quá độ dài V1 nên bỏ qua");
+                    continue;
+                }
+
                 if (isEnvatoUrl(tUrl) || isYouTubeUrl(tUrl)) {
                     var tBlackItem = getOrCreateBlackVideoItem(_session.footageFolder);
                     if (tBlackItem) {
                         try {
                             tBlackItem.setInPoint("0", MEDIA_TYPE);
                             tBlackItem.setOutPoint(Math.round(tClipDur * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
-                            insertAndRenameClip(tramTrack, tBlackItem, v1StartTime, tramClipLabel, tClipDur, tramTimeInfo.mode !== "full");
-                            tramInserted++; actions.push("Tr\u00e1m V2 Black (" + tClipDur.toFixed(1) + "s)");
+                            var resTB = insertAndRenameClip(tramTrack, tBlackItem, tramInsertPos, tramClipLabel, tClipDur, tramTimeInfo.mode !== "full");
+                            if (!resTB.error) {
+                                tramInserted++;
+                                tramInsertPos += (resTB.actualDur > 0 ? resTB.actualDur : tClipDur);
+                                actions.push("Trám V2 Black (" + tClipDur.toFixed(1) + "s)");
+                            }
                         } catch(etb) {}
                     }
                 } else {
@@ -1895,8 +1919,12 @@ function cep_processSingleRow(rowJsonStr) {
                             try {
                                 tMediaItem.setInPoint("0", MEDIA_TYPE);
                                 tMediaItem.setOutPoint(Math.round(tClipDur * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
-                                insertAndRenameClip(tramTrack, tMediaItem, v1StartTime, tramClipLabel, tClipDur, tramTimeInfo.mode !== "full");
-                                tramInserted++; actions.push("Tr\u00e1m V2 " + tLocalFileName + " (" + tClipDur.toFixed(1) + "s)");
+                                var resTM = insertAndRenameClip(tramTrack, tMediaItem, tramInsertPos, tramClipLabel, tClipDur, tramTimeInfo.mode !== "full");
+                                if (!resTM.error) {
+                                    tramInserted++;
+                                    tramInsertPos += (resTM.actualDur > 0 ? resTM.actualDur : tClipDur);
+                                    actions.push("Trám V2 " + tLocalFileName + " (" + tClipDur.toFixed(1) + "s)");
+                                }
                             } catch(etm) {}
                         }
                     }
@@ -1920,7 +1948,7 @@ function cep_processSingleRow(rowJsonStr) {
                 var tramLabel = labelEnabled ? (rowNumber + "_Tram" + tramSubCodeSuffix + "_" + shortCodeLabel(singleTramCode)) : null;
                 var tramResult = resolveAndImport(tramSourceToUse, singleTramCode, _session.fileCache, _session.itemCache, _session.footageFolder, enableCopy);
                 if (tramResult.skip) { warnings.push("Bỏ qua file trám không tìm thấy: " + singleTramCode); continue; }
-                if (tramResult.error) { warnings.push("Tr\u00e1m l\u1ed7i: " + tramResult.error); continue; }
+                if (tramResult.error) { warnings.push("Trám lỗi: " + tramResult.error); continue; }
                 if (tramResult.isNewCopy) copiesDone++;
                 var tInSec, tOutSec;
                 var tramDuration = getProjectItemDuration(tramResult.projectItem);
@@ -1943,21 +1971,38 @@ function cep_processSingleRow(rowJsonStr) {
                     else if (tramDuration <= noTimecodeDuration) { tInSec = 0; tOutSec = tramDuration; }
                     else { var tramMid = tramDuration/2; tInSec = tramMid - noTimecodeDuration/2; tOutSec = tramMid + noTimecodeDuration/2; }
                 }
-                // Cap tram duration at V1 clip duration
+
+                // Cap tram duration at V1 clip duration only if V1 exists in this row
                 var tDurRequested = tOutSec - tInSec;
-                var tDurActual = (v1ClipDuration > 0 && tDurRequested > v1ClipDuration) ? v1ClipDuration : tDurRequested;
+                var tDurActual = tDurRequested;
+                if (v1ClipDuration > 0) {
+                    var remainingV1 = Math.max(0, (rowStartTime + v1ClipDuration) - tramInsertPos);
+                    tDurActual = Math.min(tDurRequested, remainingV1);
+                    if (tDurActual <= 0.05) {
+                        warnings.push("Trám " + singleTramCode + ": vượt quá độ dài V1 (" + v1ClipDuration.toFixed(1) + "s) nên bỏ qua");
+                        continue;
+                    }
+                }
                 tOutSec = tInSec + tDurActual;
                 try {
                     waitForMediaReady(tramResult.projectItem, 6000);
                     tramResult.projectItem.setInPoint(Math.round(tInSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
                     tramResult.projectItem.setOutPoint(Math.round(tOutSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
-                    var resTram = insertAndRenameClip(tramTrack, tramResult.projectItem, v1StartTime, tramLabel, tDurActual, tramTimeInfo.mode !== "full");
+                    var resTram = insertAndRenameClip(tramTrack, tramResult.projectItem, tramInsertPos, tramLabel, tDurActual, tramTimeInfo.mode !== "full");
                     if (resTram.warning) warnings.push(resTram.warning);
-                    if (!resTram.error) { tramInserted++; actions.push("Tr\u00e1m V2 " + (tramLabel || singleTramCode) + " (" + tDurActual.toFixed(1) + "s)"); }
-                } catch(eTram) { warnings.push("L\u1ed7i ch\u00e8n tr\u00e1m: " + eTram.toString()); }
+                    if (!resTram.error) {
+                        tramInserted++;
+                        tramInsertPos += (resTram.actualDur > 0 ? resTram.actualDur : tDurActual);
+                        actions.push("Trám V2 " + (tramLabel || singleTramCode) + " (" + tDurActual.toFixed(1) + "s)");
+                    }
+                } catch(eTram) { warnings.push("Lỗi chèn trám: " + eTram.toString()); }
             }
         }
     }
+
+    var rowEndTimeV1 = (clipsInserted > 0) ? getTrackEndSeconds(mainTrack) : rowStartTime;
+    var rowEndTimeTram = (tramInserted > 0) ? tramInsertPos : rowStartTime;
+    _session.timelineCursorSec = Math.max(rowEndTimeV1, rowEndTimeTram);
 
     return toJson({
         status: (warnings.length > 0) ? "warning" : "success",
