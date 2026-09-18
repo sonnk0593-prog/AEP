@@ -10,7 +10,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "2.1.4";
+var APP_VERSION = "2.1.6";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -2084,7 +2084,7 @@ function copyAndRelinkFootage() {
 function askCopyAndRelink() {
     showConfirm("Copy & Relink Footage",
         "Tính năng này sẽ:\n\n" +
-        "<strong>1.</strong> Copy tất cả video source đang dùng trong Timeline về thư mục <code>Footage/</code> cạnh file project.\n" +
+        "<strong>1.</strong> Copy tất cả video source đang dùng trong Timeline về thư mục <code>Footage/</code> ở thư mục gốc order (cùng cấp _PRJ, File).\n" +
         "<strong>2.</strong> Relink toàn bộ source cũ sang file vừa copy.\n\n" +
         "Premiere sẽ tạm đứng trong lúc copy — đó là bình thường, panel vẫn hiện % và tốc độ.",
         "Bắt đầu copy",

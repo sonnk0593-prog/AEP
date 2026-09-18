@@ -1,13 +1,13 @@
 {
-    "version":  "2.1.4",
+    "version":  "2.1.6",
     "notes":  [
-                  "Sửa lại giao diện",
-                  "Có gì đó mới :v"
+                  "Cập nhật và tối ưu hiệu năng",
+                  "Cải tiến xử lý Footage và sửa lỗi phát sinh"
               ],
     "files":  [
                   {
                       "path":  "index.html",
-                      "sha256":  "dd0355df392c47a118d21cf17e6c572a3a09a7e882418be752134a2df48503f6"
+                      "sha256":  "66d8c1bfd0b910096bf117d4978373c1476d58f22149fec4220de1acf3ae6820"
                   },
                   {
                       "path":  "css/style.css",
@@ -23,11 +23,11 @@
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "94263868d6e9c22ef9cf721495b605e1bf8915bdede4c75719f3360ee02607ba"
+                      "sha256":  "2adefed61067cc34a43cc0ade2654e72cd6934c2cfcf654d05126261df097583"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "f3f3be309e71e17b3a672d8a551ba283e50840ddd2314b116097ae5fa9ac7138"
+                      "sha256":  "8e778542c2dc72f54490b97550c5d23f58dbb12f220fcc3dd7369ae41f607b2a"
                   },
                   {
                       "path":  "sound/done.mp3",

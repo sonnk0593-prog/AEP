@@ -21,7 +21,7 @@
 // ghi de ham cua panel nap truoc. Panel doi chieu bien nay de biet script dang
 // chay co dung cua no khong.
 // ============================================================================
-var IMPORTCUT_VERSION = "2.1.4";
+var IMPORTCUT_VERSION = "2.1.6";
 
 var TICKS_PER_SECOND = 254016000000;
 var MEDIA_TYPE = 4;
@@ -924,9 +924,37 @@ function getOrCreateFootageFolder(folderName) {
             // Project chưa lưu: dùng thư mục Desktop hoặc Temp
             projectPath = Folder.desktop.fsName + "/UntitledProject.prproj";
         }
-        var parentDir = new File(projectPath).parent.fsName;
-        var ff = new Folder(parentDir + "/" + (folderName || "Footage"));
-        if (!ff.exists && !ff.create()) return null;
+        var projFile = new File(projectPath);
+        var cur = projFile.parent;
+        var rootDir = cur;
+        var nameToUse = folderName || "Footage";
+
+        // 1. Nếu project nằm trong thư mục _PRJ (hoặc thư mục con của _PRJ), thư mục gốc là cha của _PRJ
+        var p = cur;
+        while (p && p.parent && p.fsName !== p.parent.fsName) {
+            if (p.name.toLowerCase() === "_prj") {
+                rootDir = p.parent;
+                break;
+            }
+            p = p.parent;
+        }
+
+        // 2. Nếu chưa tìm thấy _PRJ ở tổ tiên, kiểm tra thư mục cha có phải là order root không
+        // (order root thường chứa _PRJ hoặc Footage cùng cấp)
+        if (rootDir === cur && cur && cur.parent && cur.fsName !== cur.parent.fsName) {
+            var checkPrj = new Folder(cur.parent.fsName + "/_PRJ");
+            var checkFootage = new Folder(cur.parent.fsName + "/" + nameToUse);
+            if (checkPrj.exists || checkFootage.exists) {
+                rootDir = cur.parent;
+            }
+        }
+
+        var ff = new Folder(rootDir.fsName + "/" + nameToUse);
+        if (!ff.exists && !ff.create()) {
+            // Fallback: nếu không tạo được ở rootDir thì thử tạo tại thư mục cạnh file project
+            ff = new Folder(cur.fsName + "/" + nameToUse);
+            if (!ff.exists && !ff.create()) return null;
+        }
         return ff;
     } catch(e) { return null; }
 }
