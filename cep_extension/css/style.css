@@ -1943,3 +1943,218 @@ body {
         grid-row: auto;
     }
 }
+
+/* --------------------------------------------------------------------------
+   Envato Integration UI (Header Badge & Media Check Banner)
+   -------------------------------------------------------------------------- */
+.btn-envato {
+    border-color: rgba(130, 180, 64, 0.35);
+    background: rgba(130, 180, 64, 0.12);
+}
+
+.btn-envato:hover {
+    background: rgba(130, 180, 64, 0.22);
+    border-color: rgba(130, 180, 64, 0.65);
+    box-shadow: 0 0 12px rgba(130, 180, 64, 0.35);
+}
+
+.api-dot.warning {
+    background: var(--accent-amber-glow);
+    box-shadow: 0 0 8px var(--accent-amber-glow);
+}
+
+.envato-check-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    padding: 9px 12px;
+    border-radius: var(--radius-md);
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(52, 211, 153, 0.35);
+    font-size: 11px;
+    color: var(--text-primary);
+}
+
+.envato-check-banner.need-login {
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(251, 191, 36, 0.45);
+}
+
+.envato-banner-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.envato-banner-sub {
+    font-size: 10px;
+    color: var(--text-secondary);
+}
+
+.btn-envato-action {
+    background: linear-gradient(135deg, #65a30d 0%, #10b981 100%);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: var(--radius-full);
+    padding: 5px 12px;
+    font-size: 10.5px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.btn-envato-action:hover:not(:disabled) {
+    filter: brightness(1.1);
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.45);
+}
+
+.btn-envato-action:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* --------------------------------------------------------------------------
+   Media Type Filter Toggles (File NAS / Envato / YouTube) trong Media Check
+   -------------------------------------------------------------------------- */
+.media-type-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: rgba(10, 12, 22, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-md);
+}
+
+.media-type-bar-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.media-type-bar-btns {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.media-type-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px 4px 7px;
+    border-radius: var(--radius-full);
+    font-family: inherit;
+    font-size: 10.5px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-muted);
+}
+
+.media-type-toggle.is-on {
+    color: #ffffff;
+    background: rgba(16, 185, 129, 0.15);
+    border-color: rgba(52, 211, 153, 0.5);
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.18);
+}
+
+.media-type-toggle.is-on.type-nas {
+    background: rgba(59, 130, 246, 0.16);
+    border-color: rgba(96, 165, 250, 0.55);
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.2);
+}
+
+.media-type-toggle.is-on.type-envato {
+    background: rgba(130, 180, 64, 0.18);
+    border-color: rgba(163, 230, 53, 0.55);
+    box-shadow: 0 0 10px rgba(130, 180, 64, 0.22);
+}
+
+.media-type-toggle.is-on.type-youtube {
+    background: rgba(239, 68, 68, 0.16);
+    border-color: rgba(248, 113, 113, 0.55);
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.22);
+}
+
+.media-type-toggle:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.1);
+}
+
+.mtt-switch {
+    position: relative;
+    width: 22px;
+    height: 12px;
+    border-radius: 999px;
+    background: rgba(100, 116, 139, 0.45);
+    transition: background 0.18s ease;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.media-type-toggle.is-on .mtt-switch {
+    background: #10b981;
+}
+
+.media-type-toggle.is-on.type-nas .mtt-switch {
+    background: #3b82f6;
+}
+
+.media-type-toggle.is-on.type-envato .mtt-switch {
+    background: #82b440;
+}
+
+.media-type-toggle.is-on.type-youtube .mtt-switch {
+    background: #ef4444;
+}
+
+.mtt-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ffffff;
+    transition: transform 0.18s ease;
+}
+
+.media-type-toggle.is-on .mtt-knob {
+    transform: translateX(10px);
+}
+
+.mtt-count {
+    padding: 1px 5px;
+    border-radius: 999px;
+    font-size: 9.5px;
+    font-weight: 800;
+    background: rgba(0, 0, 0, 0.35);
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.check-skipped-note {
+    color: #94a3b8;
+    font-weight: 700;
+}
+
+.media-check-row.check-disabled,
+.media-group.check-disabled {
+    opacity: 0.48;
+    filter: grayscale(0.45);
+}
+
+.check-disabled .media-check-status {
+    color: #94a3b8;
+}

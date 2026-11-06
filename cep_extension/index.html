@@ -15,6 +15,10 @@
                 <p>Tự động dựng kịch bản Google Sheet</p>
             </div>
             <div class="header-actions">
+                <button id="btnEnvatoAuth" class="btn-api btn-envato" title="Đăng nhập tài khoản Envato để tải stock video chất lượng cao nhất">
+                    <span id="envatoBtnDot" class="api-dot"></span>
+                    <span id="envatoBtnText">Envato</span>
+                </button>
                 <button id="btnOpenApi" class="btn-api" title="Cài đặt Gemini API Key">
                     <span id="apiBtnDot" class="api-dot"></span>
                     <span>API</span>
@@ -86,6 +90,25 @@
                         </label>
                     </div>
                     <div class="auto-timecode-note">💡 Với những đoạn không có đủ timecode sẽ hiện màu đỏ trên Timeline</div>
+                </div>
+
+                <div class="auto-timecode-block" style="margin-top: 10px;">
+                    <div class="auto-timecode-head">
+                        <span class="mapping-title">📁 Dòng chỉ có link Folder (không có mã file)</span>
+                    </div>
+                    <div class="auto-timecode-section">
+                        <div class="auto-timecode-option">
+                            <span>Lấy ngẫu nhiên</span>
+                            <input type="number" id="txtFolderRandomCount" class="num-input" value="3" min="1" max="20" style="width: 48px;">
+                            <span>file trong folder</span>
+                        </div>
+                        <div class="auto-timecode-option" style="margin-top: 6px;">
+                            <span>Thời lượng mỗi file:</span>
+                            <input type="number" id="txtFolderRandomDuration" class="num-input" value="2" min="1" max="60" style="width: 48px;">
+                            <span>giây</span>
+                        </div>
+                    </div>
+                    <div class="auto-timecode-note">💡 Tự động quét folder lấy ngẫu nhiên X file, mỗi file 2 giây đưa lên Timeline</div>
                 </div>
                 <!-- Luôn bật, không hiển thị: đổi tên clip theo số hàng -->
                 <input type="checkbox" id="chkLabel" checked hidden>
@@ -276,7 +299,13 @@
                 <button id="btnChangelogClose" class="btn-ai-modal-close" title="Đóng">✕</button>
             </div>
             <div class="changelog-list">
-                <div>- Tự động tạo và lưu Footage tại thư mục gốc của order (cùng cấp _PRJ, File)</div>
+                <div>- <strong>Tải Stock Video từ Envato (4K / Original):</strong> Hỗ trợ tải trực tiếp từ <code>app.envato.com</code> và <code>elements.envato.com</code> bằng tài khoản cá nhân, ưu tiên chất lượng cao nhất, tự động cắt theo timecode và chèn lên V1/V2</div>
+                <div>- <strong>Chế độ chống khoá tài khoản Envato:</strong> Tải tuần tự kèm độ trễ ngẫu nhiên (3.5–6.5s) và lưu cache theo mã video tại <code>Footage/</code> để không tải trùng</div>
+                <div>- <strong>Cột Source gộp đường dẫn:</strong> Tự động nhận diện đường dẫn file đầy đủ (UNC hoặc ổ đĩa) trong cột Source mà không cần cột tên file riêng</div>
+                <div>- <strong>Chỉ có link Folder:</strong> Tự động quét và lấy ngẫu nhiên X file (mặc định 3 file, 2s/file), tùy chỉnh được trong Cấu hình dựng</div>
+                <div>- <strong>Lọc link YouTube chuẩn xác:</strong> Tự động lọc sạch ký tự hoặc ghi chú đi kèm link YouTube trong kịch bản (ví dụ "lấy từ 1p22...")</div>
+                <div>- <strong>Tải YouTube trực tiếp:</strong> Link YouTube trong kịch bản được tải video thật bằng yt-dlp &amp; ffmpeg, import trực tiếp vào Premiere (thay vì Black Video)</div>
+                <div>- <strong>Tải ảnh trực tiếp:</strong> Link ảnh (.jpg, .png...) được tải về Footage/ và chèn lên timeline (5 giây)</div>
                 <div>- Copy &amp; Relink Footage trực tiếp về thư mục Footage ở thư mục gốc</div>
             </div>
             <div class="changelog-update-row">

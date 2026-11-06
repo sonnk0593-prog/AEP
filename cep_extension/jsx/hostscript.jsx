@@ -1,4 +1,4 @@
-﻿/*
+/*
     hostscript.jsx - Backend ExtendScript for Premiere Pro CEP Extension
     Auto Import & Cut V2
 */
@@ -21,12 +21,14 @@
 // ghi de ham cua panel nap truoc. Panel doi chieu bien nay de biet script dang
 // chay co dung cua no khong.
 // ============================================================================
-var IMPORTCUT_VERSION = "2.1.7";
+var IMPORTCUT_VERSION = "2.3.0";
+var IMPORTCUT_VERSION = "2.3.3";
 
 var TICKS_PER_SECOND = 254016000000;
 var MEDIA_TYPE = 4;
 var MAX_SEARCH_DEPTH = 5;
 var VIDEO_EXTENSIONS = ["mp4", "mov", "mxf", "mts", "m4v", "avi", "wmv"];
+var IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "webp"];
 var HEADER_SCAN_ROWS = 20;
 
 var _session = {
@@ -34,7 +36,11 @@ var _session = {
     fileCache: {},
     itemCache: {},
     durationCache: {},
+    folderPickCache: {},
+    csvRows: null,
     footageFolder: null,
+    downloadFolder: null,
+    envatoFiles: {},
     lastBody: "",
     lastSourceFolder: "",
     lastFileCode: "",
@@ -149,7 +155,11 @@ function cep_applyNormalizedScript(csvContent, editsJson, colsJson) {
                 tramSource: cols.tramSourceCol, tramCode: cols.tramCodeCol, tramTime: cols.tramTimeCol };
             for (var f = 0; f < fields.length; f++) {
                 var field = fields[f], col = columns[field];
-                if (col !== undefined && col !== null && parseInt(col, 10) >= 0 && edit[field] !== undefined) rows[rowIndex][parseInt(col, 10)] = String(edit[field]);
+                if (col !== undefined && col !== null && parseInt(col, 10) >= 0 && edit[field] !== undefined) {
+                    var newVal = String(edit[field]);
+                    if (/^https?:[\\\/]{2}/i.test(trim(newVal))) newVal = newVal.replace(/\\/g, "/");
+                    rows[rowIndex][parseInt(col, 10)] = newVal;
+                }
             }
         }
         var normalized = serializeCSV(rows);
@@ -438,6 +448,12 @@ function detectColumnsByHeader(rows) {
             var fCol = srcC[k3];
             if (content.full[fCol] >= 1) { codeC.push(fCol); srcC.splice(k3, 1); }
         }
+        if (codeC.length === 0 && srcC.length > 0 && content.path[srcC[0]] >= 1) {
+            var singleMediaCol = srcC[0];
+            codeC.push(singleMediaCol);
+            content.full[singleMediaCol] = Math.max(content.full[singleMediaCol] || 0, 1);
+            srcC.splice(0, 1);
+        }
 
         if (codeC.length === 0) continue;
         srcC.sort(sortNumAsc); codeC.sort(sortNumAsc); timeC.sort(sortNumAsc);
@@ -493,15 +509,116 @@ function detectColumns(rows) {
 function extractUrls(text) {
     if (!text) return [];
     var urls = [], regex = /(https?:\/\/[^\s\r\n",<>]+)/gi, match;
-    while ((match = regex.exec(text)) !== null) { var u = trim(match[1]); if (u !== "") urls.push(u); }
+    while ((match = regex.exec(text)) !== null) {
+        var u = trim(match[1]);
+        // Loại bỏ các dấu câu, ngoặc, nháy dính ở đuôi URL (ví dụ ghi chú "link (lấy từ...)" hoặc "link,")
+        u = u.replace(/[.,;:!?)\"'>\]]+$/, "");
+        // Nếu có chữ tiếng Việt dính liền vào đuôi link mà không có dấu cách (ký tự unicode > 127)
+        var firstNonAscii = -1;
+        for (var i = 0; i < u.length; i++) {
+            if (u.charCodeAt(i) > 127) { firstNonAscii = i; break; }
+        }
+        if (firstNonAscii !== -1) {
+            u = u.substring(0, firstNonAscii).replace(/[.,;:!?)\"'>\]]+$/, "");
+        }
+        if (u !== "") urls.push(u);
+    }
     return urls;
 }
-function isEnvatoUrl(url) { return url.toLowerCase().indexOf("envato.com") !== -1; }
+function isEnvatoUrl(url) { return !!(url && url.toLowerCase().indexOf("envato.com") !== -1); }
+
+function getEnvatoItemKey(url) {
+    if (!url) return "item";
+    var clean = trim(url).split("?")[0].split("#")[0].replace(/\/+$/, "");
+    var mUuid = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(clean);
+    if (mUuid) return mUuid[1].toLowerCase();
+    var mCode = /-([A-Z0-9]{6,12})$/i.exec(clean);
+    if (mCode) return mCode[1].toUpperCase();
+    var lastSeg = clean.substring(clean.lastIndexOf("/") + 1).replace(/[^A-Za-z0-9_-]/g, "_");
+    return lastSeg || "item";
+}
+
+function findCachedEnvatoFile(folderObj, url) {
+    if (!url) return null;
+    var key = getEnvatoItemKey(url);
+    if (_session.envatoFiles) {
+        var mappedPath = _session.envatoFiles[url] || _session.envatoFiles[key];
+        if (mappedPath) {
+            var mf = new File(mappedPath);
+            if (mf.exists && mf.length > 0) return mf;
+        }
+    }
+    var dir = folderObj || _session.downloadFolder || _session.footageFolder;
+    if (!dir || !dir.exists) return null;
+    try {
+        var cacheJsonFile = new File(dir.fsName + "/.envato_cache.json");
+        if (cacheJsonFile.exists) {
+            var rawCache = readTextFile(cacheJsonFile.fsName);
+            var cacheObj = rawCache ? parseJson(rawCache) : null;
+            if (cacheObj) {
+                var relName = cacheObj[url] || cacheObj[key] || cacheObj[key.toLowerCase()];
+                if (relName) {
+                    var cf = new File(dir.fsName + "/" + relName);
+                    if (cf.exists && cf.length > 0) return cf;
+                }
+            }
+        }
+    } catch (eCache) {}
+    var exts = ["mp4", "mov", "m4v", "webm", "mkv"];
+    for (var i = 0; i < exts.length; i++) {
+        var cand = new File(dir.fsName + "/envato_" + key + "." + exts[i]);
+        if (cand.exists && cand.length > 0) return cand;
+    }
+    try {
+        var files = dir.getFiles("envato_" + key + ".*");
+        if (files) {
+            for (var fi = 0; fi < files.length; fi++) {
+                if (files[fi] instanceof File && files[fi].length > 0) {
+                    var nm = files[fi].name.toLowerCase();
+                    if (nm.indexOf(".crdownload") === -1 && nm.indexOf(".part") === -1 && nm.indexOf(".tmp") === -1) {
+                        return files[fi];
+                    }
+                }
+            }
+        }
+    } catch (eFiles) {}
+    return null;
+}
 function isYouTubeUrl(url) { var l = url.toLowerCase(); return l.indexOf("youtube.com") !== -1 || l.indexOf("youtu.be") !== -1; }
+function getYouTubeVideoId(url) {
+    if (!url) return "";
+    var m1 = /[?&]v=([A-Za-z0-9_-]{6,20})/i.exec(url);
+    if (m1) return m1[1];
+    var m2 = /youtu\.be\/([A-Za-z0-9_-]{6,20})/i.exec(url);
+    if (m2) return m2[1];
+    var m3 = /youtube\.com\/(?:shorts|embed|live|v)\/([A-Za-z0-9_-]{6,20})/i.exec(url);
+    if (m3) return m3[1];
+    return "";
+}
 function getExtensionFromUrl(url) {
     var clean = url.split("?")[0].split("#")[0], ld = clean.lastIndexOf(".");
     if (ld !== -1 && ld > clean.lastIndexOf("/")) { var ext = clean.substring(ld+1).toLowerCase(); if (ext.length >= 2 && ext.length <= 4) return ext; }
     return "jpg";
+}
+
+function isImageExtension(filename) {
+    var lower = filename.toLowerCase();
+    for (var i = 0; i < IMAGE_EXTENSIONS.length; i++) { var ext = "." + IMAGE_EXTENSIONS[i]; if (lower.indexOf(ext) === lower.length - ext.length) return true; }
+    return false;
+}
+
+/** Link URL tro toi 1 file anh (khong phai video, khong phai YouTube/Envato). */
+function isImageUrl(url) {
+    if (!url) return false;
+    var l = url.toLowerCase();
+    if (isYouTubeUrl(url) || isEnvatoUrl(url)) return false;
+    var ext = getExtensionFromUrl(url);
+    for (var i = 0; i < IMAGE_EXTENSIONS.length; i++) { if (ext === IMAGE_EXTENSIONS[i]) return true; }
+    // Nhan dien anh tu Google Drive, Imgur, ...
+    if (l.indexOf("googleusercontent.com") !== -1) return true;
+    if (l.indexOf("imgur.com") !== -1) return true;
+    if (l.indexOf("i.ibb.co") !== -1) return true;
+    return false;
 }
 
 /**
@@ -584,6 +701,118 @@ function downloadFileFromUrl(url, destPath) {
     } catch(e) { return null; }
 }
 
+/**
+ * Tai video YouTube bang yt-dlp qua PowerShell.
+ * yt-dlp duoc tim trong PATH hoac thu muc Footage.
+ * Neu chua cai -> tu dong tai yt-dlp.exe portable ve thu muc Footage.
+ * Tra ve File object neu thanh cong, null neu that bai.
+ * result.warning chua thong bao can hien (vd: dang tai yt-dlp...).
+ */
+function downloadYouTubeVideo(url, destPath) {
+    try {
+        url = trim(url); if (url === "") return null;
+        var destFile = new File(destPath);
+        if (!destFile.parent.exists) destFile.parent.create();
+        if (destFile.exists && destFile.length > 0) return destFile;
+
+        function q(s) { return "'" + String(s).replace(/'/g, "''") + "'"; }
+        var destWin = destPath.replace(/\//g, "\\");
+        var destDir = destFile.parent.fsName.replace(/\//g, "\\");
+
+        // Tim yt-dlp: trong PATH, Footage, hoac cac thu muc he thong/ung dung co san
+        var ps = [
+            "$ErrorActionPreference = 'Continue'",
+            "$outPath = " + q(destWin),
+            "$outDir = " + q(destDir),
+            "$url = " + q(url),
+            "",
+            "# Tim yt-dlp",
+            "$ytdlp = $null",
+            "$inPath = Get-Command yt-dlp -ErrorAction SilentlyContinue",
+            "if ($inPath) { $ytdlp = $inPath.Source }",
+            "if (-not $ytdlp) {",
+            "  $candidates = @(",
+            "    (Join-Path $outDir 'yt-dlp.exe'),",
+            "    (Join-Path $env:LOCALAPPDATA 'Meowgic\\binaries\\yt-dlp.exe'),",
+            "    (Join-Path $env:LOCALAPPDATA 'Meowgic\\binaries\\yt-dlp.exe'),",
+            "    (Join-Path $env:APPDATA 'blinkl.io\\resources\\io.any-paste.blinkl\\yt-dlp\\yt-dlp.exe'),",
+            "    (Join-Path $env:LOCALAPPDATA 'yt-dlp\\yt-dlp.exe')",
+            "  )",
+            "  foreach ($c in $candidates) {",
+            "    if (Test-Path -LiteralPath $c) { $ytdlp = $c; break }",
+            "  }",
+            "}",
+            "",
+            "# Tu dong tai yt-dlp.exe neu chua co",
+            "if (-not $ytdlp) {",
+            "  $local = Join-Path $outDir 'yt-dlp.exe'",
+            "  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12",
+            "  $ProgressPreference = 'SilentlyContinue'",
+            "  $dlUrl = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe'",
+            "  try {",
+            "    $curl = Join-Path $env:SystemRoot 'System32\\curl.exe'",
+            "    if (Test-Path -LiteralPath $curl) { & $curl -L -k -s -o $local $dlUrl }",
+            "    if (-not (Test-Path -LiteralPath $local) -or (Get-Item -LiteralPath $local).Length -lt 1000) {",
+            "      (New-Object Net.WebClient).DownloadFile($dlUrl, $local)",
+            "    }",
+            "    if (Test-Path -LiteralPath $local) { $ytdlp = $local }",
+            "  } catch {}",
+            "}",
+            "",
+            "if (-not $ytdlp) { exit 1 }",
+            "",
+            "# Tim ffmpeg de hop nhat video chat luong cao nhat",
+            "$ffmpeg = $null",
+            "$inFf = Get-Command ffmpeg -ErrorAction SilentlyContinue",
+            "if ($inFf) { $ffmpeg = $inFf.Source }",
+            "if (-not $ffmpeg) {",
+            "  $ffCandidates = @(",
+            "    (Join-Path $outDir 'ffmpeg.exe'),",
+            "    (Join-Path $env:LOCALAPPDATA 'Programs\\Meowgic\\resources\\backend\\binaries\\win\\ffmpeg.exe'),",
+            "    (Join-Path $env:LOCALAPPDATA 'QuickMediaConverter\\ffmpeg.exe'),",
+            "    (Join-Path $env:APPDATA 'blinkl.io\\resources\\ffmpeg\\ffmpeg.exe')",
+            "  )",
+            "  foreach ($f in $ffCandidates) {",
+            "    if (Test-Path -LiteralPath $f) { $ffmpeg = $f; break }",
+            "  }",
+            "}",
+            "",
+            "# 1. Thu merge voi chat luong tot nhat (can ffmpeg)",
+            "if ($ffmpeg) {",
+            "  & $ytdlp --no-update --no-warnings --no-playlist --ffmpeg-location $ffmpeg -S 'vcodec:h264,res,acodec:m4a' -f 'bv*[vcodec^=avc1][ext=mp4]+ba[ext=m4a]/bv*[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][ext=mp4]/bv*[vcodec^=avc1]+ba/bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b' --merge-output-format mp4 -o $outPath $url",
+            "  if (Test-Path -LiteralPath $outPath) { exit 0 }",
+            "}",
+            "",
+            "# 2. Fallback: single stream mp4 (khong can ffmpeg)",
+            "& $ytdlp --no-update --no-warnings --no-playlist -S 'vcodec:h264,res,acodec:m4a' -f 'b[vcodec^=avc1][ext=mp4]/b[ext=mp4]/bv*[vcodec^=avc1][ext=mp4]/b' -o $outPath $url",
+            "if (Test-Path -LiteralPath $outPath) { exit 0 }",
+            "",
+            "# 3. Last resort: bat ky format nao",
+            "$outTemplate = $outPath -replace '\\.[^.]+$', '.%(ext)s'",
+            "& $ytdlp --no-update --no-warnings --no-playlist -f 'b' -o $outTemplate $url",
+            ""
+        ].join("\r\n");
+
+        var ok = runPowerShellAndWait(ps, 1800000);  // timeout 30 phut cho video dai
+        // Kiem tra file output: co the la .mp4, .webm, .mkv tuy format YouTube
+        var c = new File(destPath);
+        if (c.exists && c.length > 0) return c;
+        // Tim file co ten tuong tu nhung khac duoi mo rong hop le (khong lay .part, .ytdl...)
+        var validMedia = { "mp4": 1, "mkv": 1, "webm": 1, "mov": 1, "m4v": 1, "ts": 1 };
+        var baseName = destFile.name.replace(/\.[^.]+$/, "");
+        var parentFiles = destFile.parent.getFiles(baseName + ".*");
+        if (parentFiles) {
+            for (var fi = 0; fi < parentFiles.length; fi++) {
+                if (parentFiles[fi] instanceof File && parentFiles[fi].length > 0) {
+                    var fExt = getExtensionFromUrl(parentFiles[fi].name);
+                    if (validMedia[fExt]) return parentFiles[fi];
+                }
+            }
+        }
+        return null;
+    } catch (e) { return null; }
+}
+
 // ---- Ghi file nhi phan bang chinh ExtendScript (khong can PowerShell) ----
 var B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -636,6 +865,18 @@ function getOrCreateBlackVideoItem(footageFolder) {
 function parseTimeToSeconds(str) {
     if (!str) return null;
     str = trim(str).replace(/\s+/g, "");
+    // Dạng 1p22, 1p22s, 1m22, 1m22s (phút & giây tiếng Việt)
+    var mMinSec = /^(\d{1,2})[pm](\d{1,2})s?$/i.exec(str);
+    if (mMinSec) {
+        return parseInt(mMinSec[1], 10) * 60 + parseInt(mMinSec[2], 10);
+    }
+    // Dạng 26s hoặc t=26s
+    var mSec = /^(?:t=)?(\d+)s$/i.exec(str);
+    if (mSec) return parseInt(mSec[1], 10);
+    // Dạng 1p hoặc 1m
+    var mMin = /^(\d+)[pm]$/i.exec(str);
+    if (mMin) return parseInt(mMin[1], 10) * 60;
+    // Dạng HH:MM:SS hoặc MM:SS
     var parts = str.split(":"), seconds = 0, mult = [1, 60, 3600];
     for (var j = 0; j < parts.length; j++) {
         var idx = parts.length - 1 - j, val = parseFloat(parts[idx]);
@@ -661,8 +902,8 @@ function parseAllTimeRanges(str) {
         var line = trim(lines[li]);
         if (line === "") continue;
 
-        // Extract all timecodes from this line
-        var timeRegex = /(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?)/g;
+        // Extract all timecodes from this line (hỗ trợ cả HH:MM:SS, MM:SS, 1p22, 26s)
+        var timeRegex = /(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?|\b\d{1,2}\s*[pm]\s*\d{1,2}s?\b|\b\d+\s*s\b)/gi;
         var matches = [], match;
         while ((match = timeRegex.exec(line)) !== null) {
             matches.push(match[1].replace(/\s+/g, ""));
@@ -683,6 +924,9 @@ function parseAllTimeRanges(str) {
             var outSec = parseTimeToSeconds(matches[matches.length - 1]);
             if (inSec !== null && outSec !== null && outSec > inSec) {
                 results.push({ mode: "full", inSec: inSec, outSec: outSec });
+            } else if (inSec !== null && outSec !== null && inSec > outSec) {
+                // Timecode bị nhập ngược (vd: "3:29 - 3:26") -> hoán đổi IN/OUT để cắt đúng, nhưng vẫn báo rose
+                results.push({ mode: "reversed", inSec: outSec, outSec: inSec });
             } else if (inSec !== null) {
                 results.push({ mode: "start", inSec: inSec });
             }
@@ -710,6 +954,21 @@ function parseTimeRange(str) {
 // Recognizes file code patterns: C####, DJI_, GH#, GP#, GOPR, FPV, etc.
 function splitCodeAndTimecode(raw) {
     if (!raw || trim(raw) === "") return { codes: "", embeddedTime: "" };
+    // Nếu là đường dẫn file đầy đủ thì giữ nguyên, không tách timecode
+    if (isFullFilePath(raw)) return { codes: stripQuotes(raw), embeddedTime: "" };
+    var urlsInRaw = extractUrls(raw);
+    if (urlsInRaw.length > 0) {
+        var remUrlText = raw;
+        for (var ui = 0; ui < urlsInRaw.length; ui++) {
+            remUrlText = remUrlText.replace(urlsInRaw[ui], " ");
+        }
+        var urlTimeRegex = /(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?)/g;
+        var urlTimeMatches = [], uMatch;
+        while ((uMatch = urlTimeRegex.exec(remUrlText)) !== null) {
+            urlTimeMatches.push(uMatch[1]);
+        }
+        return { codes: urlsInRaw.join("\n"), embeddedTime: urlTimeMatches.join(" - ") };
+    }
 
     // Extract all timecode patterns (MM:SS or HH:MM:SS) from the raw string
     var timeRegex = /(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?)/g;
@@ -871,6 +1130,33 @@ function findFilesByCode(folder, code, depth, results) {
     }
 }
 
+/** Quét tất cả file video/ảnh trong thư mục (đệ quy) */
+function getAllMediaFilesInFolder(folder, depth, results) {
+    if (depth > MAX_SEARCH_DEPTH || !folder.exists) return;
+    var items; try { items = folder.getFiles(); } catch(e) { return; }
+    if (!items) return;
+    for (var i = 0; i < items.length; i++) {
+        var item = items[i];
+        if (item instanceof Folder) {
+            getAllMediaFilesInFolder(item, depth + 1, results);
+        } else if (item instanceof File && (hasVideoExtension(item.name) || isImageExtension(item.name))) {
+            results.push(item);
+        }
+    }
+}
+
+/** Chọn ngẫu nhiên X file từ danh sách file (không trùng lặp) */
+function pickRandomFiles(files, count) {
+    if (!files || files.length === 0) return [];
+    if (files.length <= count) return files.slice(0);
+    var pool = files.slice(0);
+    for (var i = pool.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+    }
+    return pool.slice(0, count);
+}
+
 function findProjectItemByPath(rootItem, targetNorm) {
     for (var i = 0; i < rootItem.children.numItems; i++) {
         var item = rootItem.children[i];
@@ -984,13 +1270,14 @@ function writeCopyProgress(obj) {
     } catch (e) {}
 }
 
-function beginCopyReport(srcFile, destFile) {
+function beginCopyReport(srcFile, destFile, roboLogPath) {
     try {
         writeCopyProgress({
             state: "copying",
             name: fileNameOf(destFile.fsName),
             dest: destFile.fsName,
-            total: fileSizeOf(srcFile)
+            total: fileSizeOf(srcFile),
+            roboLog: roboLogPath || ""
         });
     } catch (e) {}
 }
@@ -1007,13 +1294,16 @@ function copyFileToFootage(srcFile, destFolder) {
         // Use fsName (OS native path) for both source and dest to avoid slash issues
         var destPath = destFolder.fsName + "/" + srcFile.name;
         var destFile = new File(destPath);
-        if (destFile.exists) return { file: destFile, isNew: false };
+        var srcLen = fileSizeOf(srcFile);
+        if (destFile.exists && (srcLen <= 0 || fileSizeOf(destFile) === srcLen)) {
+            return { file: destFile, isNew: false };
+        }
         beginCopyReport(srcFile, destFile);
 
-        // Chi file NHO moi dung File.copy() cua ExtendScript; file lon phai copy bang lenh he dieu hanh.
-        var srcLen = fileSizeOf(srcFile);
+        // Chi file RẤT NHỎ (<= 256 KB) moi dung File.copy() cua ExtendScript;
+        // moi file media lon hon phai copy bang lenh he dieu hanh (robocopy) de dat toc do Windows Explorer.
         var ok = false;
-        if (srcLen >= 0 && srcLen <= 314572800) {
+        if (srcLen >= 0 && srcLen <= 262144 && !destFile.exists) {
             try { ok = srcFile.copy(destFile.fsName); } catch (eC) { ok = false; }
             if (ok) {
                 var chkNew = new File(destPath);
@@ -1021,7 +1311,6 @@ function copyFileToFootage(srcFile, destFolder) {
             }
         }
         if (!ok) {
-            // KHONG xoa file dich o day (co the dang duoc Timeline dung) - chi copy khi chua ton tai.
             var os = osCopyFile(srcFile, destFile);
             ok = os.ok;
         }
@@ -1034,15 +1323,25 @@ function copyFileToFootage(srcFile, destFolder) {
 /** O "FILE" co the chua luon duong dan day du toi file (UNC \\server\... hoac D:\...) */
 function isFullFilePath(code) {
     var c = stripQuotes(code || "");
-    if (c.length < 4 || !hasVideoExtension(c)) return false;
+    if (c.length < 4 || (!hasVideoExtension(c) && !isImageExtension(c))) return false;
     return (c.substring(0, 2) === "\\\\") || /^[a-zA-Z]:[\\\/]/.test(c) || (c.charAt(0) === "/");
 }
 
-function resolveAndImport(folderPath, code, fileCache, itemCache, footageFolder, enableCopy) {
+/** O chua DUONG DAN THU MUC (UNC \\server\... hoac D:\..., khong co duoi mo rong video/anh, khong phai URL) */
+function isFolderPath(str) {
+    if (!str) return false;
+    var s = stripQuotes(str);
+    if (s === "") return false;
+    if (extractUrls(s).length > 0) return false;
+    if (isFullFilePath(s)) return false;
+    return looksLikeFolderValue(s);
+}
+
+function resolveSourceFileOnly(folderPath, code, fileCache) {
     folderPath = stripQuotes(folderPath);
     code = stripQuotes(code);
     var cacheKey = folderPath + "|" + code;
-    if (_session.missingSources[sourceCheckKey(folderPath, code)]) return { skip: true, matchedPath: "" };
+    if (_session.missingSources[sourceCheckKey(folderPath, code)]) return { skip: true, matchedFile: null, isAmbiguous: false };
     var matchedFile = fileCache[cacheKey];
     var isAmbiguous = false;
     if (matchedFile === undefined) {
@@ -1065,7 +1364,15 @@ function resolveAndImport(folderPath, code, fileCache, itemCache, footageFolder,
         }
         fileCache[cacheKey] = matchedFile;
     }
-    if (!matchedFile) return { error: "Kh\u00f4ng t\u00ecm th\u1ea5y file m\u00e3 '" + code + "' trong '" + folderPath + "'" };
+    return { skip: false, matchedFile: matchedFile, isAmbiguous: isAmbiguous };
+}
+
+function resolveAndImport(folderPath, code, fileCache, itemCache, footageFolder, enableCopy) {
+    var r = resolveSourceFileOnly(folderPath, code, fileCache);
+    if (r.skip) return { skip: true, matchedPath: "" };
+    var matchedFile = r.matchedFile;
+    var isAmbiguous = r.isAmbiguous;
+    if (!matchedFile) return { error: "Kh\u00f4ng t\u00ecm th\u1ea5y file m\u00e3 '" + stripQuotes(code) + "' trong '" + stripQuotes(folderPath) + "'" };
     var actualFile = matchedFile, isNewCopy = false;
     if (enableCopy && footageFolder) {
         var cr = copyFileToFootage(matchedFile, footageFolder);
@@ -1108,14 +1415,39 @@ function validateOneSource(items, rowNumber, kind, folder, code, index) {
     items.push({ id: id, checkKey: checkKey, rowNumber: rowNumber, kind: kind, folder: folder, code: code,
         requested: folder ? (folder + "\\" + code) : code,
         displayFolder: displayFolder, displayName: displayFile,
-        found: !!(found && found.exists), foundPath: found && found.exists ? found.fsName : "" });
+        found: !!(found && found.exists), foundPath: found && found.exists ? found.fsName : "", mediaType: "nas" });
 }
 
 function validateSourceUrls(items, rowNumber, kind, value, indexStart) {
     var urls = extractUrls(value || "");
     for (var i = 0; i < urls.length; i++) {
-        items.push({ id: rowNumber + "-" + kind + "-url-" + (indexStart + i), rowNumber: rowNumber, kind: kind,
-            folder: "", code: urls[i], requested: urls[i], found: true, foundPath: urls[i] });
+        var u = urls[i];
+        if (isEnvatoUrl(u)) {
+            var envKey = getEnvatoItemKey(u);
+            var envCached = findCachedEnvatoFile(_session.validateFootageFolder, u);
+            items.push({
+                id: rowNumber + "-" + kind + "-envato-" + (indexStart + i),
+                checkKey: "envato|" + envKey.toLowerCase(),
+                rowNumber: rowNumber,
+                kind: kind,
+                folder: envCached ? envCached.parent.fsName : "Envato Stock Video",
+                code: u,
+                requested: u,
+                displayFolder: envCached ? (envCached.parent.fsName + " (Đã tải sẵn trong Footage/)") : "Envato (Sẽ tải chất lượng cao nhất về Footage/)",
+                displayName: envCached ? envCached.name : ("envato_" + envKey + " ← " + u),
+                found: true,
+                foundPath: envCached ? envCached.fsName : u,
+                isEnvato: true,
+                mediaType: "envato",
+                envatoKey: envKey,
+                envatoCached: !!envCached
+            });
+        } else {
+            if (isYouTubeUrl(u)) { var ytId = getYouTubeVideoId(u) || u; var ytCf = (_session.validateFootageFolder && getYouTubeVideoId(u)) ? new File(_session.validateFootageFolder.fsName + "/yt_" + ytId + ".mp4") : null; var ytHas = !!(ytCf && ytCf.exists && ytCf.length > 0); items.push({ id: rowNumber + "-" + kind + "-yt-" + (indexStart + i), checkKey: "youtube|" + ytId, rowNumber: rowNumber, kind: kind, mediaType: "youtube", isYouTube: true, ytKey: ytId, ytCached: ytHas, folder: ytHas ? ytCf.parent.fsName : "YouTube Video", code: u, requested: u, displayFolder: ytHas ? (ytCf.parent.fsName + " (Đã tải sẵn trong Footage/)") : "YouTube (Tự động tải H.264 MP4 về Footage/)", displayName: ytHas ? ytCf.name : ("yt_" + ytId + ".mp4 ← " + u), found: true, foundPath: ytHas ? ytCf.fsName : u }); continue; }
+            items.push({ id: rowNumber + "-" + kind + "-url-" + (indexStart + i), rowNumber: rowNumber, kind: kind, mediaType: "nas",
+                folder: "", code: u, requested: u, displayFolder: "URL trực tiếp", displayName: u, found: true, foundPath: u });
+        }
+
     }
 }
 
@@ -1125,23 +1457,85 @@ function cep_validateSources(payloadJson) {
         var payload = parseJson(payloadJson), cols = payload.cols, rows = parseCSV(payload.csvContent || "");
         if (!payload || !cols) { out.error = "Thiếu dữ liệu kịch bản để kiểm tra"; return toJson(out); }
         _session.missingSources = {};
+        _session.validateFootageFolder = getOrCreateFootageFolder("Footage");
+        out.footageFolderPath = _session.validateFootageFolder ? _session.validateFootageFolder.fsName : "";
         var lastFolder = "", lastCode = "", lastTramFolder = "";
         var headerIndex = parseInt(cols.headerRowIndex, 10);
         if (isNaN(headerIndex)) headerIndex = -1;
         var first = headerIndex + 1;
         for (var r = first; r < rows.length; r++) {
             var row = rows[r]; if (!row) continue;
-            var source = cellAt(row, cols.sourceCol), code = cellAt(row, cols.codeCol), time = cellAt(row, cols.timeCol);
+            var source = cellAt(row, cols.sourceCol), code = cellAt(row, cols.codeCol), time = cellAt(row, cols.timeCol), body = cellAt(row, cols.bodyCol);
             var tramSource = cellAt(row, cols.tramSourceCol), tramCode = cellAt(row, cols.tramCodeCol);
+
+            // Chuyển folder về cột source nếu bị xếp vào code (do sheet chỉ có 1 cột Media)
+            if (isFolderPath(code) && (source === "" || isFolderPath(source))) {
+                source = code;
+                code = "";
+            }
+            if (isFolderPath(tramCode) && (tramSource === "" || isFolderPath(tramSource))) {
+                tramSource = tramCode;
+                tramCode = "";
+            }
+
+            // Gộp cột: nếu ô source/tramSource chứa đường dẫn file đầy đủ mà không có mã file riêng
+            if (code === "" && isFullFilePath(source)) code = source;
+            if (tramCode === "" && isFullFilePath(tramSource)) tramCode = tramSource;
+
             if (looksLikeFolderValue(source)) lastFolder = source;
-            if (code !== "") lastCode = code;
+            if (code !== "" && extractUrls(code).length === 0) lastCode = code;
             if (looksLikeFolderValue(tramSource)) lastTramFolder = tramSource;
-            if (code !== "" || source !== "" || time !== "") {
-                validateSourceUrls(out.items, r + 1, "V1", source + "\n" + code, 1);
-                var codes = (isFullFilePath(lastCode) ? [lastCode] : lastCode.split(/[\r\n,;]+/));
+
+            // Kiểm tra dòng chỉ có link folder (không có mã file, không có URL) -> lấy ngẫu nhiên
+            var v1Urls = extractUrls(source + "\n" + code + "\n" + body);
+            var isFolderOnlyV1 = (code === "" && v1Urls.length === 0 && isFolderPath(source));
+
+            if (isFolderOnlyV1) {
+                var fObj = new Folder(stripQuotes(source));
+                var checkKey = sourceCheckKey(source, "[Folder]");
+                var fExists = _session.replacements[checkKey] ? new Folder(_session.replacements[checkKey]).exists : fObj.exists;
+                var randCount = payload.folderRandomCount || 3;
+                if (!fExists) _session.missingSources[checkKey] = true;
+                out.items.push({
+                    id: (r + 1) + "-V1-folder",
+                    checkKey: checkKey,
+                    rowNumber: r + 1,
+                    kind: "V1",
+                    folder: source,
+                    code: "[Folder ngẫu nhiên]",
+                    requested: source,
+                    displayFolder: source,
+                    displayName: "[Lấy ngẫu nhiên " + randCount + " file]",
+                    found: fExists,
+                    foundPath: fExists ? fObj.fsName : "", mediaType: "nas"
+                });
+            } else if (v1Urls.length > 0 || code !== "" || source !== "" || time !== "") {
+                validateSourceUrls(out.items, r + 1, "V1", source + "\n" + code + "\n" + body, 1);
+                var codes = (v1Urls.length > 0 && (code === "" || extractUrls(code).length > 0)) ? [] : (isFullFilePath(lastCode) ? [lastCode] : lastCode.split(/[\r\n,;]+/));
                 for (var c = 0; c < codes.length; c++) validateOneSource(out.items, r + 1, "V1", lastFolder, codes[c], c + 1);
             }
-            if (payload.enableTram !== false && tramCode !== "") {
+
+            var tramUrls = extractUrls(tramSource + "\n" + tramCode);
+            var isFolderOnlyV2 = (payload.enableTram !== false && tramCode === "" && tramUrls.length === 0 && isFolderPath(tramSource));
+            if (isFolderOnlyV2) {
+                var tfObj = new Folder(stripQuotes(tramSource));
+                var tCheckKey = sourceCheckKey(tramSource, "[Folder]");
+                var tfExists = _session.replacements[tCheckKey] ? new Folder(_session.replacements[tCheckKey]).exists : tfObj.exists;
+                if (!tfExists) _session.missingSources[tCheckKey] = true;
+                out.items.push({
+                    id: (r + 1) + "-V2-folder",
+                    checkKey: tCheckKey,
+                    rowNumber: r + 1,
+                    kind: "V2",
+                    folder: tramSource,
+                    code: "[Folder ngẫu nhiên]",
+                    requested: tramSource,
+                    displayFolder: tramSource,
+                    displayName: "[Lấy ngẫu nhiên file trám]",
+                    found: tfExists,
+                    foundPath: tfExists ? tfObj.fsName : "", mediaType: "nas"
+                });
+            } else if (payload.enableTram !== false && tramCode !== "") {
                 validateSourceUrls(out.items, r + 1, "V2", tramSource + "\n" + tramCode, 1);
                 var tramCodes = isFullFilePath(tramCode) ? [tramCode] : tramCode.split(/[\r\n,;]+/);
                 for (var t = 0; t < tramCodes.length; t++) validateOneSource(out.items, r + 1, "V2", tramSource || lastTramFolder || lastFolder, tramCodes[t], t + 1);
@@ -1155,7 +1549,11 @@ function cep_validateSources(payloadJson) {
 function cep_setSourceReplacement(folder, code, replacementPath) {
     try {
         var f = new File(stripQuotes(replacementPath));
-        if (!f.exists) return toJson({ success: false, error: "File thay thế không tồn tại" });
+        if (!f.exists) {
+            var fld = new Folder(stripQuotes(replacementPath));
+            if (fld.exists) f = fld;
+            else return toJson({ success: false, error: "File hoặc thư mục thay thế không tồn tại" });
+        }
         var key = sourceCheckKey(folder, code);
         _session.replacements[key] = f.fsName;
         delete _session.missingSources[key];
@@ -1184,6 +1582,11 @@ function insertAndRenameClip(track, projectItem, insertPositionSec, labelText, e
         if (roseLabel && projectItem) {
             try { if (projectItem.setColorLabel) projectItem.setColorLabel(6); } catch (eRoseBefore1) {}
             try { if (projectItem.setLabelColor) projectItem.setLabelColor(6); } catch (eRoseBefore2) {}
+        } else if (!roseLabel && projectItem) {
+            // Reset màu ProjectItem về mặc định để clip mới không kế thừa màu rose
+            // từ lần xử lý trước (carry-forward cùng file)
+            try { if (projectItem.setColorLabel) projectItem.setColorLabel(0); } catch (eResetBefore1) {}
+            try { if (projectItem.setLabelColor) projectItem.setLabelColor(0); } catch (eResetBefore2) {}
         }
         track.overwriteClip(projectItem, insertPositionSec);
         var n = track.clips.numItems; if (n === 0) return { error: null, warning: null, actualDur: 0 };
@@ -1206,6 +1609,12 @@ function insertAndRenameClip(track, projectItem, insertPositionSec, labelText, e
             try { if (bestClip.setLabelColor) bestClip.setLabelColor(6); } catch (eRose3) {}
             try { if (bestClip.projectItem && bestClip.projectItem.setColorLabel) bestClip.projectItem.setColorLabel(6); } catch (eRose2) {}
             try { if (bestClip.projectItem && bestClip.projectItem.setLabelColor) bestClip.projectItem.setLabelColor(6); } catch (eRose4) {}
+        } else if (bestClip && !roseLabel) {
+            // Đảm bảo clip có màu mặc định, không bị nhiễm màu rose từ clip trước
+            try { if (bestClip.setColorLabel) bestClip.setColorLabel(0); } catch (eReset1) {}
+            try { if (bestClip.setLabelColor) bestClip.setLabelColor(0); } catch (eReset3) {}
+            try { if (bestClip.projectItem && bestClip.projectItem.setColorLabel) bestClip.projectItem.setColorLabel(0); } catch (eReset2) {}
+            try { if (bestClip.projectItem && bestClip.projectItem.setLabelColor) bestClip.projectItem.setLabelColor(0); } catch (eReset4) {}
         }
 
         var warning = null, actualDur = 0;
@@ -1486,8 +1895,8 @@ function findFirstDataRowFor(rows, cols) {
         if (!row) continue;
         var codeV = cellAt(row, cols.codeCol), srcV = cellAt(row, cols.sourceCol);
         var tCodeV = cellAt(row, cols.tramCodeCol), tSrcV = cellAt(row, cols.tramSourceCol);
-        if (looksLikeCode(codeV) || looksLikeFullFilePath(codeV) || looksLikePath(srcV) ||
-            looksLikeCode(tCodeV) || looksLikeFullFilePath(tCodeV) || looksLikePath(tSrcV)) return r;
+        if (looksLikeCode(codeV) || looksLikeFullFilePath(codeV) || looksLikePath(codeV) || looksLikePath(srcV) ||
+            looksLikeCode(tCodeV) || looksLikeFullFilePath(tCodeV) || looksLikePath(tCodeV) || looksLikePath(tSrcV)) return r;
     }
     return 0;
 }
@@ -1571,12 +1980,15 @@ function cep_initSession(configJsonStr) {
     var config = parseJson(configJsonStr) || {};
     _session.config = config;
     _session.active = true;
-    _session.fileCache = {}; _session.itemCache = {}; _session.durationCache = {};
+    _session.fileCache = {}; _session.itemCache = {}; _session.durationCache = {}; _session.folderPickCache = {};
+    _session.csvRows = config.csvContent ? parseCSV(config.csvContent) : null;
     _session.lastBody = ""; _session.lastSourceFolder = ""; _session.lastFileCode = ""; _session.lastTramFolder = "";
     _session.timelineCursorSec = null;
     var footageFolder = null;
     if (config.enableCopyToLocal !== false) footageFolder = getOrCreateFootageFolder(config.footageFolderName || "Footage");
     _session.footageFolder = footageFolder;
+    _session.downloadFolder = footageFolder || getOrCreateFootageFolder(config.footageFolderName || "Footage");
+    _session.envatoFiles = {};
     return toJson({ success: true, footageFolderPath: footageFolder ? footageFolder.fsName : null });
 }
 
@@ -1615,6 +2027,42 @@ function scanRowForFileAndTime(rawRow) {
     return out;
 }
 
+function getPickedFolderFiles(cacheKey, folderPathStr, randCount) {
+    if (_session.folderPickCache[cacheKey] !== undefined) return _session.folderPickCache[cacheKey];
+    var fObj = new Folder(stripQuotes(folderPathStr));
+    var chkKey = sourceCheckKey(folderPathStr, "[Folder]");
+    if (_session.replacements[chkKey]) fObj = new Folder(_session.replacements[chkKey]);
+    var allMedia = [];
+    getAllMediaFilesInFolder(fObj, 0, allMedia);
+    var chosen = (allMedia.length > 0) ? pickRandomFiles(allMedia, randCount) : [];
+    _session.folderPickCache[cacheKey] = chosen;
+    return chosen;
+}
+
+function parseRowFileCodes(codeToUse) {
+    var fileCodes = [], anyFullPath = false, cIdx, sc;
+    var codeLines = String(codeToUse || "").split(/[\r\n]+/), allLinesAreFiles = true;
+    for (cIdx = 0; cIdx < codeLines.length; cIdx++) {
+        sc = stripQuotes(codeLines[cIdx]);
+        if (sc === "") continue;
+        if (!isFullFilePath(sc)) { allLinesAreFiles = false; break; }
+    }
+    if (allLinesAreFiles) {
+        for (cIdx = 0; cIdx < codeLines.length; cIdx++) { sc = stripQuotes(codeLines[cIdx]); if (sc !== "") fileCodes.push(sc); }
+        anyFullPath = (fileCodes.length > 0);
+    } else {
+        var rawCodes = String(codeToUse || "").split(/[\r\n,;]+/);
+        for (cIdx = 0; cIdx < rawCodes.length; cIdx++) {
+            sc = stripQuotes(rawCodes[cIdx]);
+            if (sc === "") continue;
+            fileCodes.push(sc);
+            if (isFullFilePath(sc)) anyFullPath = true;
+        }
+    }
+    if (fileCodes.length === 0 && codeToUse !== "") fileCodes = [codeToUse];
+    return { fileCodes: fileCodes, anyFullPath: anyFullPath };
+}
+
 function cep_processSingleRow(rowJsonStr) {
     var rowData = parseJson(rowJsonStr);
     if (!rowData || !_session.active) return toJson({ status: "error", errorMsg: "Session ch\u01b0a \u0111\u01b0\u1ee3c kh\u1edfi t\u1ea1o" });
@@ -1631,6 +2079,10 @@ function cep_processSingleRow(rowJsonStr) {
     var enableTram = _session.config.enableTram !== false;
     var labelEnabled = _session.config.enableLabel !== false;
     var enableCopy = _session.config.enableCopyToLocal !== false;
+    var enableNas = _session.config.enableNas !== false;
+    var enableEnvato = _session.config.enableEnvato !== false;
+    var enableYouTube = _session.config.enableYouTube !== false;
+    var skippedTypes = [];
 
     var mainTrack = seq.videoTracks[mainTrackIndex];
     var tramTrack = (enableTram && seq.videoTracks.numTracks > tramTrackIndex) ? seq.videoTracks[tramTrackIndex] : null;
@@ -1645,6 +2097,42 @@ function cep_processSingleRow(rowJsonStr) {
     var tramTimeRaw = trim(rowData.tramTime || "");
     // AI-generated label override (from Gemini Clip Namer)
     var labelOverride = trim(rowData.labelOverride || "");
+
+    // Chuyển folder về sourceRaw nếu ô codeRaw thực chất là đường dẫn FOLDER (do sheet chỉ có 1 cột Media)
+    if (isFolderPath(codeRaw) && (sourceRaw === "" || isFolderPath(sourceRaw))) {
+        sourceRaw = codeRaw;
+        codeRaw = "";
+    }
+    if (isFolderPath(tramCodeRaw) && (tramSourceRaw === "" || isFolderPath(tramSourceRaw))) {
+        tramSourceRaw = tramCodeRaw;
+        tramCodeRaw = "";
+    }
+
+    // Gộp cột: nếu ô source/tramSource chứa đường dẫn file đầy đủ mà không có mã file riêng
+    if (codeRaw === "" && sourceRaw !== "") {
+        var sLines = sourceRaw.split(/[\r\n]+/);
+        var allSFull = true;
+        for (var sli = 0; sli < sLines.length; sli++) {
+            var slStr = stripQuotes(sLines[sli]);
+            if (slStr === "") continue;
+            if (!isFullFilePath(slStr)) { allSFull = false; break; }
+        }
+        if (allSFull && sLines.length > 0) {
+            codeRaw = sourceRaw;
+        }
+    }
+    if (tramCodeRaw === "" && tramSourceRaw !== "") {
+        var tsLines = tramSourceRaw.split(/[\r\n]+/);
+        var allTsFull = true;
+        for (var tsli = 0; tsli < tsLines.length; tsli++) {
+            var tslStr = stripQuotes(tsLines[tsli]);
+            if (tslStr === "") continue;
+            if (!isFullFilePath(tslStr)) { allTsFull = false; break; }
+        }
+        if (allTsFull && tsLines.length > 0) {
+            tramCodeRaw = tramSourceRaw;
+        }
+    }
 
     // ---- Smart split: tách mã file khỏi timecode gộp trong cùng 1 ô ----
     // VD: "C5439 - 02:00" -> code="C5439", embeddedTime="02:00"
@@ -1679,17 +2167,136 @@ function cep_processSingleRow(rowJsonStr) {
         }
     }
 
+    var prevLastBody = _session.lastBody;
+    var prevLastSourceFolder = _session.lastSourceFolder;
+    var prevLastFileCode = _session.lastFileCode;
+    var prevLastTramFolder = _session.lastTramFolder;
+
     // Carry-forward: chi ghi nho gia tri THAT SU la duong dan.
     // Cot source cua nhieu bang con bi dung de ghi chu ("che mat neu can"...) -> khong duoc
     // de ghi chu do de len thu muc dang dung cho cac hang phia sau.
     if (bodyRaw !== "") _session.lastBody = bodyRaw;
     if (looksLikeFolderValue(sourceRaw)) _session.lastSourceFolder = sourceRaw;
-    if (codeRaw !== "") _session.lastFileCode = codeRaw;
+    if (codeRaw !== "" && extractUrls(codeRaw).length === 0) _session.lastFileCode = codeRaw;
     if (looksLikeFolderValue(tramSourceRaw)) _session.lastTramFolder = tramSourceRaw;
 
     // Parse tất cả time ranges (có thể nhiều dòng, mỗi dòng 1 đoạn)
     var allTimeRanges = parseAllTimeRanges(timeRaw);
     if (allTimeRanges === null) return toJson({ status: "skipped", rowNumber: rowNumber, details: "B\u1ecf qua d\u00f2ng N.A", clipCount: 0, copyCount: 0, downloadCount: 0 });
+
+    var mainUrls = extractUrls(sourceRaw + "\n" + codeRaw + "\n" + bodyRaw);
+    var isFolderOnlyV1 = (codeRaw === "" && mainUrls.length === 0 && isFolderPath(sourceRaw));
+    var hasExplicitV1 = (codeRaw !== "" || timeRaw !== "");
+
+    var tramUrls = extractUrls(tramSourceRaw + "\n" + tramCodeRaw);
+    var isFolderOnlyV2 = (tramCodeRaw === "" && tramUrls.length === 0 && isFolderPath(tramSourceRaw));
+    var hasTramExplicit = (tramUrls.length > 0) || (tramCodeRaw !== "") || isFolderOnlyV2;
+    var dlFolder = _session.downloadFolder || _session.footageFolder || getOrCreateFootageFolder("Footage");
+    if (rowData.envatoFiles && typeof rowData.envatoFiles === "object") {
+        if (!_session.envatoFiles) _session.envatoFiles = {};
+        for (var efKey in rowData.envatoFiles) {
+            if (rowData.envatoFiles.hasOwnProperty(efKey)) _session.envatoFiles[efKey] = rowData.envatoFiles[efKey];
+        }
+    }
+
+    // ---- Uu tien tai video Envato o tang Node.js (EnvatoDownloader) truoc khi cat ----
+    if (rowData.deferEnvato && enableEnvato) {
+        var pendingEnvato = [], seenEnvKey = {}, ei;
+        for (ei = 0; ei < mainUrls.length; ei++) {
+            if (isEnvatoUrl(mainUrls[ei])) {
+                var eKey1 = getEnvatoItemKey(mainUrls[ei]);
+                if (!seenEnvKey[eKey1] && !findCachedEnvatoFile(dlFolder, mainUrls[ei])) {
+                    seenEnvKey[eKey1] = true;
+                    pendingEnvato.push({ url: mainUrls[ei], key: eKey1, kind: "V1" });
+                }
+            }
+        }
+        if (enableTram && tramTrack && hasTramExplicit && parseTimeRange(tramTimeRaw) !== null) {
+            for (ei = 0; ei < tramUrls.length; ei++) {
+                if (isEnvatoUrl(tramUrls[ei])) {
+                    var eKey2 = getEnvatoItemKey(tramUrls[ei]);
+                    if (!seenEnvKey[eKey2] && !findCachedEnvatoFile(dlFolder, tramUrls[ei])) {
+                        seenEnvKey[eKey2] = true;
+                        pendingEnvato.push({ url: tramUrls[ei], key: eKey2, kind: "V2" });
+                    }
+                }
+            }
+        }
+        if (pendingEnvato.length > 0) {
+            _session.lastBody = prevLastBody;
+            _session.lastSourceFolder = prevLastSourceFolder;
+            _session.lastFileCode = prevLastFileCode;
+            _session.lastTramFolder = prevLastTramFolder;
+            return toJson({
+                status: "need_envato_download",
+                rowNumber: rowNumber,
+                footageDir: dlFolder ? dlFolder.fsName : "",
+                downloads: pendingEnvato
+            });
+        }
+    }
+
+    // ---- Uu tien giao viec copy file cho Node.js (FastCopy) o tang panel ----
+    // Tranh lam dong bang Premiere Pro va dat 100% toc do Windows Explorer (robocopy truc tiep).
+    if (enableCopy && enableNas && _session.footageFolder && rowData.deferCopy) {
+        var candidates = [], ci;
+        if (mainUrls.length === 0) {
+            if (isFolderOnlyV1) {
+                var preChosenV1 = getPickedFolderFiles("V1_" + rowNumber, sourceRaw, _session.config.folderRandomCount || 3);
+                for (ci = 0; ci < preChosenV1.length; ci++) candidates.push(preChosenV1[ci]);
+            } else if (hasExplicitV1 && !enableNas) {
+        skippedTypes.push("File NAS");
+    } else if (hasExplicitV1) {
+                var preSrc1 = _session.lastSourceFolder, preCode1 = _session.lastFileCode;
+                var preParsed1 = parseRowFileCodes(preCode1);
+                if (preCode1 !== "" && (preSrc1 !== "" || preParsed1.anyFullPath)) {
+                    for (ci = 0; ci < preParsed1.fileCodes.length; ci++) {
+                        var rf1 = resolveSourceFileOnly(preSrc1, preParsed1.fileCodes[ci], _session.fileCache);
+                        if (rf1.matchedFile) candidates.push(rf1.matchedFile);
+                    }
+                }
+            }
+        }
+        if (enableTram && tramTrack && hasTramExplicit && tramUrls.length === 0) {
+            if (isFolderOnlyV2) {
+                var preChosenV2 = getPickedFolderFiles("V2_" + rowNumber, tramSourceRaw, _session.config.folderRandomCount || 3);
+                for (ci = 0; ci < preChosenV2.length; ci++) candidates.push(preChosenV2[ci]);
+            } else if (tramCodeRaw !== "" && parseTimeRange(tramTimeRaw) !== null) {
+                var preSrc2 = (tramSourceRaw !== "") ? tramSourceRaw : (_session.lastTramFolder !== "" ? _session.lastTramFolder : _session.lastSourceFolder);
+                var preParsed2 = parseRowFileCodes(tramCodeRaw);
+                for (ci = 0; ci < preParsed2.fileCodes.length; ci++) {
+                    var rf2 = resolveSourceFileOnly(preSrc2, preParsed2.fileCodes[ci], _session.fileCache);
+                    if (rf2.matchedFile) candidates.push(rf2.matchedFile);
+                }
+            }
+        }
+        var pendingCopies = [], seenDest = {};
+        for (ci = 0; ci < candidates.length; ci++) {
+            var cand = candidates[ci];
+            if (!cand || !cand.exists) continue;
+            var dPath = _session.footageFolder.fsName + "/" + cand.name;
+            var dNorm = normalizePath(dPath);
+            if (seenDest[dNorm]) continue;
+            seenDest[dNorm] = true;
+            var dFile = new File(dPath);
+            var sLen = fileSizeOf(cand);
+            if (!dFile.exists || (sLen > 0 && fileSizeOf(dFile) !== sLen)) {
+                pendingCopies.push({
+                    srcPath: cand.fsName,
+                    destPath: dFile.fsName,
+                    name: cand.name,
+                    sizeBytes: (sLen > 0 ? sLen : 0)
+                });
+            }
+        }
+        if (pendingCopies.length > 0) {
+            _session.lastBody = prevLastBody;
+            _session.lastSourceFolder = prevLastSourceFolder;
+            _session.lastFileCode = prevLastFileCode;
+            _session.lastTramFolder = prevLastTramFolder;
+            return toJson({ status: "need_copy", rowNumber: rowNumber, copies: pendingCopies });
+        }
+    }
 
     var currentMainEnd = getTrackEndSeconds(mainTrack);
     var currentTramEnd = (tramTrack ? getTrackEndSeconds(tramTrack) : 0);
@@ -1700,7 +2307,7 @@ function cep_processSingleRow(rowJsonStr) {
     }
     var rowStartTime = _session.timelineCursorSec;
 
-    var clipsInserted = 0, copiesDone = 0, downloadsDone = 0;
+    var clipsInserted = 0, copiesDone = parseInt(rowData.preCopiedCount, 10) || 0, downloadsDone = parseInt(rowData.preDownloadedCount, 10) || 0;
     var warnings = [], actions = [];
     var v1ClipDuration = 0; // Will be set after inserting V1 clip
 
@@ -1710,16 +2317,7 @@ function cep_processSingleRow(rowJsonStr) {
     // =========================================================================
     // 1. SOURCE CHINH (V1)
     // =========================================================================
-    // KEY FIX: Nếu hàng không có source, code VÀ timecode V1 (cả 3 đều rỗng)
-    // → đây là hàng chỉ có trám (tram-only row), bỏ qua V1 hoàn toàn.
-    // Carry-forward chỉ được dùng khi ít nhất có 1 trong: source, code, hoặc timecode V1.
-    // Hang chi co THU MUC ma khong co ma file va khong co timecode => khong co gi de chen.
-    // (Truoc day van chen, khien clip cua hang tren bi nhan ban them mot lan.)
-    // Con hang chi co TIMECODE (khong co ma file) van hop le: do la doan khac cua CHINH file o tren.
-    var hasExplicitV1 = (codeRaw !== "" || timeRaw !== "");
-    var mainUrls = extractUrls(sourceRaw + "\n" + codeRaw + "\n" + bodyRaw);
-
-    if (!hasExplicitV1 && mainUrls.length === 0) {
+    if (!hasExplicitV1 && mainUrls.length === 0 && !isFolderOnlyV1) {
         // Hàng chỉ có trám — skip toàn bộ V1, nhảy thẳng xuống xử lý trám
     } else if (mainUrls.length > 0) {
         for (var uIdx = 0; uIdx < mainUrls.length; uIdx++) {
@@ -1731,19 +2329,128 @@ function cep_processSingleRow(rowJsonStr) {
             var urlRange = (allTimeRanges && allTimeRanges.length > 0) ? allTimeRanges[0] : { mode: "auto" };
             var clipDur = (urlRange.mode === "full") ? (urlRange.outSec - urlRange.inSec) : defaultDuration;
 
-            if (isEnvatoUrl(currentUrl) || isYouTubeUrl(currentUrl)) {
-                var blackItem = getOrCreateBlackVideoItem(_session.footageFolder);
-                if (!blackItem) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Không tạo được Black Video" });
+            if (isYouTubeUrl(currentUrl)) {
+                if (!enableYouTube) { skippedTypes.push("YouTube"); continue; }
+                // === YOUTUBE: tai video bang yt-dlp ===
+                var ytVidId = getYouTubeVideoId(currentUrl); var ytFileName = ytVidId ? ("yt_" + ytVidId + ".mp4") : (rowNumber + subSuffix + ".mp4");
+                var ytFolderFs = _session.footageFolder ? _session.footageFolder.fsName : (new File(app.project.path).parent.fsName);
+                var ytDestPath = ytFolderFs + "/" + ytFileName;
+                var ytExistedBefore = (new File(ytDestPath)).exists; var ytDownloaded = downloadYouTubeVideo(currentUrl, ytDestPath);
+                if (ytDownloaded) {
+                    if (!ytExistedBefore) downloadsDone++;
+                    var ytFsPath = ytDownloaded.fsName; var ytMediaItem = _session.itemCache[ytFsPath]; if (ytMediaItem === undefined) { ytMediaItem = importAndGetProjectItem(ytFsPath); _session.itemCache[ytFsPath] = ytMediaItem; }
+                    if (!ytMediaItem) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Import YouTube thất bại: " + ytDownloaded.fsName });
+                    try {
+                        waitForMediaReady(ytMediaItem, 10000);
+                        var ytTotalDur = getProjectItemDuration(ytMediaItem);
+                        var ytInSec = 0, ytOutSec;
+                        var ytNorm = resolveNormalizedTimeRange(urlRange, ytTotalDur, defaultDuration); if (ytNorm) { ytInSec = ytNorm.inSec; ytOutSec = ytNorm.outSec; } else if (urlRange.mode === "full" || urlRange.mode === "reversed") { ytInSec = urlRange.inSec; ytOutSec = urlRange.outSec; }
+                        else if (ytTotalDur !== null && ytTotalDur > 0) { ytOutSec = ytTotalDur; }
+                        else { ytOutSec = clipDur; }
+                        ytMediaItem.setInPoint(Math.round(ytInSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                        ytMediaItem.setOutPoint(Math.round(ytOutSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                        var insertPosYT = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
+                        var resYT = insertAndRenameClip(mainTrack, ytMediaItem, insertPosYT, clipLabel, ytOutSec - ytInSec, false);
+                        if (resYT.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: resYT.error });
+                        if (resYT.warning) warnings.push(resYT.warning);
+                        clipsInserted++; v1ClipDuration += (ytOutSec - ytInSec);
+                        actions.push("YouTube V1 " + (clipLabel || ytFileName) + " (" + (ytOutSec - ytInSec).toFixed(1) + "s)");
+                    } catch(eYT) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Lỗi chèn YouTube: " + eYT.toString() }); }
+                } else {
+                    // Fallback: yt-dlp that bai -> chen Black Video placeholder
+                    warnings.push("Không tải được YouTube (cần cài yt-dlp): " + currentUrl + " → dùng Black Video");
+                    var blackItem = getOrCreateBlackVideoItem(_session.footageFolder);
+                    if (blackItem) {
+                        try {
+                            blackItem.setInPoint("0", MEDIA_TYPE);
+                            blackItem.setOutPoint(Math.round(clipDur * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                            var insertPosB = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
+                            var resB = insertAndRenameClip(mainTrack, blackItem, insertPosB, clipLabel, clipDur, true);
+                            if (!resB.error) { clipsInserted++; v1ClipDuration = clipDur; }
+                        } catch(eB) {}
+                    }
+                }
+            } else if (isEnvatoUrl(currentUrl)) {
+                if (!enableEnvato) { skippedTypes.push("Envato"); continue; }
+                // === ENVATO: tai video chat luong cao nhat ve Footage/ va cat theo timecode ===
+                var envKeyV1 = getEnvatoItemKey(currentUrl);
+                var envFileV1 = findCachedEnvatoFile(dlFolder, currentUrl);
+                if (envFileV1 && envFileV1.exists) {
+                    var envFsPath = envFileV1.fsName;
+                    var envProjectItem = _session.itemCache[envFsPath];
+                    if (envProjectItem === undefined) {
+                        envProjectItem = importAndGetProjectItem(envFsPath);
+                        _session.itemCache[envFsPath] = envProjectItem;
+                    }
+                    if (!envProjectItem) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Import Envato thất bại: " + envFsPath });
+                    try {
+                        waitForMediaReady(envProjectItem, 10000);
+                        var envDuration = getProjectItemDuration(envProjectItem);
+                        for (var erIdx = 0; erIdx < allTimeRanges.length; erIdx++) {
+                            var envRangeInfo = allTimeRanges[erIdx];
+                            var envRangeSuffix = (allTimeRanges.length > 1) ? ("-" + (erIdx + 1)) : "";
+                            var envClipLabel = labelEnabled ? (baseLabel + subSuffix + envRangeSuffix + "_Envato_" + envKeyV1.substring(0, 8)) : null;
+                            var envInSec, envOutSec;
+                            var envNormRange = resolveNormalizedTimeRange(envRangeInfo, envDuration, defaultDuration);
+                            if (envNormRange) {
+                                envInSec = envNormRange.inSec; envOutSec = envNormRange.outSec;
+                                if (!envNormRange.exact) {
+                                    warnings.push("Mốc 'hết' của Envato " + envKeyV1 + ": không xác định được thời lượng → tạm lấy " + defaultDuration + "s");
+                                }
+                            } else if (envRangeInfo.mode === "full") {
+                                envInSec = envRangeInfo.inSec; envOutSec = envRangeInfo.outSec;
+                            } else if (envRangeInfo.mode === "reversed") {
+                                envInSec = envRangeInfo.inSec; envOutSec = envRangeInfo.outSec;
+                                warnings.push("Timecode Envato bị nhập ngược tại dòng " + rowNumber + ": đã tự sửa");
+                            } else if (envRangeInfo.mode === "start") {
+                                var envSingleDur = singleTimeEnabled ? singleTimeDuration : defaultDuration;
+                                envInSec = Math.max(0, envRangeInfo.inSec - envSingleDur);
+                                envOutSec = envRangeInfo.inSec;
+                            } else {
+                                if (noTimecodeMode === "full" && envDuration !== null && envDuration > 0) { envInSec = 0; envOutSec = envDuration; }
+                                else if (envDuration === null || envDuration <= 0) { envInSec = 0; envOutSec = noTimecodeDuration; }
+                                else if (envDuration <= noTimecodeDuration) { envInSec = 0; envOutSec = envDuration; }
+                                else { var envMid = envDuration / 2; envInSec = envMid - noTimecodeDuration / 2; envOutSec = envMid + noTimecodeDuration / 2; }
+                            }
+                            envProjectItem.setInPoint(Math.round(envInSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                            envProjectItem.setOutPoint(Math.round(envOutSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                            var insertPosEnvReal = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
+                            var roseEnv = (envRangeInfo.mode === "auto" || envRangeInfo.mode === "start" || envRangeInfo.mode === "reversed");
+                            var resEnvReal = insertAndRenameClip(mainTrack, envProjectItem, insertPosEnvReal, envClipLabel, envOutSec - envInSec, roseEnv);
+                            if (resEnvReal.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: resEnvReal.error });
+                            if (resEnvReal.warning) warnings.push(resEnvReal.warning);
+                            clipsInserted++; v1ClipDuration += (envOutSec - envInSec);
+                            actions.push("Envato V1 " + (envClipLabel || envFileV1.name) + " (" + envInSec.toFixed(0) + "s~" + envOutSec.toFixed(0) + "s)");
+                        }
+                    } catch (eEnvReal) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Lỗi chèn Envato V1: " + eEnvReal.toString() }); }
+                } else {
+                    warnings.push("Không tải được Envato (" + envKeyV1 + ") → dùng Black Video tạm");
+                    var blackItemEnv = getOrCreateBlackVideoItem(_session.footageFolder);
+                    if (!blackItemEnv) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Không tạo được Black Video" });
+                    try {
+                        blackItemEnv.setInPoint("0", MEDIA_TYPE);
+                        blackItemEnv.setOutPoint(Math.round(clipDur * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                        var insertPosEnv = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
+                        var resEnv = insertAndRenameClip(mainTrack, blackItemEnv, insertPosEnv, clipLabel, clipDur, urlRange.mode !== "full");
+                        if (resEnv.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: resEnv.error });
+                        if (resEnv.warning) warnings.push(resEnv.warning);
+                        clipsInserted++; v1ClipDuration = clipDur;
+                        actions.push("Black Video (Envato) " + (clipLabel || rowNumber));
+                    } catch(eEnv) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Lỗi chèn Black Video: " + eEnv.toString() }); }
+                }
+                if (false) {
+                var blackItemEnv = getOrCreateBlackVideoItem(_session.footageFolder);
+                if (!blackItemEnv) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Không tạo được Black Video" });
                 try {
-                    blackItem.setInPoint("0", MEDIA_TYPE);
-                    blackItem.setOutPoint(Math.round(clipDur * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
-                    var insertPosB = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
-                    var resB = insertAndRenameClip(mainTrack, blackItem, insertPosB, clipLabel, clipDur, urlRange.mode !== "full");
-                    if (resB.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: resB.error });
-                    if (resB.warning) warnings.push(resB.warning);
+                    blackItemEnv.setInPoint("0", MEDIA_TYPE);
+                    blackItemEnv.setOutPoint(Math.round(clipDur * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                    var insertPosEnv = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
+                    var resEnv = insertAndRenameClip(mainTrack, blackItemEnv, insertPosEnv, clipLabel, clipDur, urlRange.mode !== "full");
+                    if (resEnv.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: resEnv.error });
+                    if (resEnv.warning) warnings.push(resEnv.warning);
                     clipsInserted++; v1ClipDuration = clipDur;
-                    actions.push("Black Video " + (clipLabel || rowNumber));
-                } catch(eB) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Lỗi chèn Black Video: " + eB.toString() }); }
+                    actions.push("Black Video (Envato) " + (clipLabel || rowNumber));
+                } catch(eEnv) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Lỗi chèn Black Video: " + eEnv.toString() }); } }
             } else {
                 var ext = getExtensionFromUrl(currentUrl);
                 var localFileName = rowNumber + subSuffix + "." + ext;
@@ -1766,34 +2473,59 @@ function cep_processSingleRow(rowJsonStr) {
                 } catch(eM) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Lỗi chèn media: " + eM.toString() }); }
             }
         }
+            } else if (isFolderOnlyV1 && !enableNas) {
+                skippedTypes.push("File NAS");
+            } else if (isFolderOnlyV1) {
+        // === FOLDER-ONLY: quét folder lấy ngẫu nhiên X file, mỗi file 2s (hoặc theo cấu hình) ===
+        var randCountV1 = _session.config.folderRandomCount || 3;
+        var randDurV1 = _session.config.folderRandomDuration || 2;
+        var chosenV1 = getPickedFolderFiles("V1_" + rowNumber, sourceRaw, randCountV1);
+        if (chosenV1.length === 0) {
+            warnings.push("Thư mục trống hoặc không có file media hợp lệ: " + sourceRaw);
+        } else {
+            for (var rfi = 0; rfi < chosenV1.length; rfi++) {
+                var cFile = chosenV1[rfi];
+                var actualCFile = cFile;
+                if (enableCopy && _session.footageFolder) {
+                    var crV1 = copyFileToFootage(cFile, _session.footageFolder);
+                    if (crV1 && crV1.file) { actualCFile = crV1.file; if (crV1.isNew) copiesDone++; }
+                }
+                var pItemV1 = importAndGetProjectItem(actualCFile.fsName);
+                if (!pItemV1) { warnings.push("Import thất bại: " + actualCFile.fsName); continue; }
+                try {
+                    waitForMediaReady(pItemV1, 6000);
+                    var totDurV1 = getProjectItemDuration(pItemV1);
+                    var inSecV1 = 0, outSecV1 = randDurV1;
+                    if (totDurV1 && totDurV1 > randDurV1) {
+                        var maxStV1 = Math.max(0, totDurV1 - randDurV1);
+                        inSecV1 = Math.floor(Math.random() * maxStV1);
+                        outSecV1 = inSecV1 + randDurV1;
+                    }
+                    pItemV1.setInPoint(Math.round(inSecV1 * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                    pItemV1.setOutPoint(Math.round(outSecV1 * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                    var insPosV1 = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
+                    var cSuffixV1 = (chosenV1.length > 1) ? ("." + (rfi + 1)) : "";
+                    var cLabelV1 = labelEnabled ? (baseLabel + cSuffixV1 + "_" + shortCodeLabel(cFile.name)) : null;
+                    var resV1Rand = insertAndRenameClip(mainTrack, pItemV1, insPosV1, cLabelV1, randDurV1, false);
+                    if (!resV1Rand.error) {
+                        clipsInserted++;
+                        v1ClipDuration += randDurV1;
+                        actions.push("Folder V1 " + (cLabelV1 || cFile.name) + " (" + randDurV1 + "s)");
+                    }
+                } catch(eRandV1) { warnings.push("Lỗi chèn file ngẫu nhiên: " + eRandV1.toString()); }
+            }
+        }
+    } else if (hasExplicitV1 && !enableNas) {
+        skippedTypes.push("File NAS");
     } else if (hasExplicitV1) {
         // ---- NAS / local file path — carry-forward chỉ khi hàng có ít nhất source/code/time ----
         var sourceToUse = _session.lastSourceFolder;
         var codeToUse = _session.lastFileCode;
         if (codeToUse === "") return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Thiếu Source hoặc mã file" });
 
-        // O file co the la DUONG DAN DAY DU (mot hoac nhieu dong) -> khong tach theo dau phay
-        // vi ten thu muc co the chua dau phay; khi do khong can cot thu muc rieng.
-        var fileCodes = [], anyFullPath = false, cIdx, sc;
-        var codeLines = codeToUse.split(/[\r\n]+/), allLinesAreFiles = true;
-        for (cIdx = 0; cIdx < codeLines.length; cIdx++) {
-            sc = stripQuotes(codeLines[cIdx]);
-            if (sc === "") continue;
-            if (!isFullFilePath(sc)) { allLinesAreFiles = false; break; }
-        }
-        if (allLinesAreFiles) {
-            for (cIdx = 0; cIdx < codeLines.length; cIdx++) { sc = stripQuotes(codeLines[cIdx]); if (sc !== "") fileCodes.push(sc); }
-            anyFullPath = (fileCodes.length > 0);
-        } else {
-            var rawCodes = codeToUse.split(/[\r\n,;]+/);
-            for (cIdx = 0; cIdx < rawCodes.length; cIdx++) {
-                sc = stripQuotes(rawCodes[cIdx]);
-                if (sc === "") continue;
-                fileCodes.push(sc);
-                if (isFullFilePath(sc)) anyFullPath = true;
-            }
-        }
-        if (fileCodes.length === 0) fileCodes = [codeToUse];
+        var parsedV1Codes = parseRowFileCodes(codeToUse);
+        var fileCodes = parsedV1Codes.fileCodes;
+        var anyFullPath = parsedV1Codes.anyFullPath;
         if (sourceToUse === "" && !anyFullPath) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Thiếu Source hoặc mã file" });
 
         for (var fIdx = 0; fIdx < fileCodes.length; fIdx++) {
@@ -1829,6 +2561,11 @@ function cep_processSingleRow(rowJsonStr) {
                     }
                 }
                 else if (timeRangeInfo.mode === "full") { inSec = timeRangeInfo.inSec; outSec = timeRangeInfo.outSec; }
+                else if (timeRangeInfo.mode === "reversed") {
+                    // Timecode bị nhập ngược: đã được hoán đổi sẵn trong parse, dùng trực tiếp
+                    inSec = timeRangeInfo.inSec; outSec = timeRangeInfo.outSec;
+                    warnings.push("Timecode bị nhập ngược tại dòng " + rowNumber + ": đã tự sửa để cắt đúng");
+                }
                 else if (timeRangeInfo.mode === "start") {
                     var singleDuration = singleTimeEnabled ? singleTimeDuration : defaultDuration;
                     inSec = Math.max(0, timeRangeInfo.inSec - singleDuration);
@@ -1847,7 +2584,9 @@ function cep_processSingleRow(rowJsonStr) {
                     mainResult.projectItem.setInPoint(Math.round(inSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
                     mainResult.projectItem.setOutPoint(Math.round(outSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
                     var insertPosV = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
-                    var resV = insertAndRenameClip(mainTrack, mainResult.projectItem, insertPosV, clipLabel, outSec - inSec, timeRangeInfo.mode !== "full");
+                    // Rose: chỉ khi không có timecode (auto), 1 đầu timecode (start), hoặc ngược chiều (reversed)
+                    var roseV = (timeRangeInfo.mode === "auto" || timeRangeInfo.mode === "start" || timeRangeInfo.mode === "reversed");
+                    var resV = insertAndRenameClip(mainTrack, mainResult.projectItem, insertPosV, clipLabel, outSec - inSec, roseV);
                     if (resV.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: resV.error });
                     if (resV.warning) warnings.push(resV.warning);
                     clipsInserted++; v1ClipDuration += (outSec - inSec);
@@ -1864,8 +2603,6 @@ function cep_processSingleRow(rowJsonStr) {
     //    - If V1 is empty (tram-only row), tram inserts sequentially and advances timeline cursor
     // =========================================================================
     var tramInserted = 0;
-    var tramUrls = extractUrls(tramSourceRaw + "\n" + tramCodeRaw);
-    var hasTramExplicit = (tramUrls.length > 0) || (tramCodeRaw !== "");
 
     if (enableTram && tramTrack && hasTramExplicit) {
         var tramTimeInfo = parseTimeRange(tramTimeRaw);
@@ -1893,7 +2630,127 @@ function cep_processSingleRow(rowJsonStr) {
                     continue;
                 }
 
-                if (isEnvatoUrl(tUrl) || isYouTubeUrl(tUrl)) {
+                if (isYouTubeUrl(tUrl)) {
+                    if (!enableYouTube) { skippedTypes.push("YouTube Trám"); continue; }
+                    // === YOUTUBE TRAM: tai video bang yt-dlp ===
+                    var ytTramVidId = getYouTubeVideoId(tUrl); var ytTramName = ytTramVidId ? ("yt_" + ytTramVidId + ".mp4") : (rowNumber + "_Tram" + tSubSuffix + ".mp4");
+                    var ytTramDir = _session.footageFolder ? _session.footageFolder.fsName : (new File(app.project.path).parent.fsName);
+                    var ytTramDest = ytTramDir + "/" + ytTramName;
+                    var ytTramExisted = (new File(ytTramDest)).exists; var ytTramFile = downloadYouTubeVideo(tUrl, ytTramDest);
+                    if (ytTramFile) {
+                        if (typeof ytTramExisted === "undefined" || !ytTramExisted) downloadsDone++;
+                        var ytTramFs = ytTramFile.fsName; var ytTramMedia = _session.itemCache[ytTramFs]; if (ytTramMedia === undefined) { ytTramMedia = importAndGetProjectItem(ytTramFs); _session.itemCache[ytTramFs] = ytTramMedia; }
+                        if (ytTramMedia) {
+                            try {
+                                waitForMediaReady(ytTramMedia, 10000);
+                                var ytTramTotalDur = getProjectItemDuration(ytTramMedia);
+                                var ytTramInSec = 0, ytTramOutSec;
+                        var ytTramNorm = resolveNormalizedTimeRange(tramTimeInfo, ytTramTotalDur, defaultDuration); if (ytTramNorm) { ytTramInSec = ytTramNorm.inSec; ytTramOutSec = ytTramNorm.outSec; } else if (tramTimeInfo.mode === "full" || tramTimeInfo.mode === "reversed") { ytTramInSec = tramTimeInfo.inSec; ytTramOutSec = tramTimeInfo.outSec; }
+                                else if (ytTramTotalDur !== null && ytTramTotalDur > 0) { ytTramOutSec = Math.min(ytTramTotalDur, tClipDur); }
+                                else { ytTramOutSec = tClipDur; }
+                                var ytTramActualDur = ytTramOutSec - ytTramInSec;
+                                if (v1ClipDuration > 0) {
+                                    var remV1 = Math.max(0, (rowStartTime + v1ClipDuration) - tramInsertPos);
+                                    ytTramActualDur = Math.min(ytTramActualDur, remV1);
+                                    if (ytTramActualDur <= 0.05) { warnings.push("Tr\u00e1m YouTube " + tUrl + ": v\u01b0\u1ee3t qu\u00e1 \u0111\u1ed9 d\u00e0i V1 n\u00ean b\u1ecf qua"); continue; }
+                                    ytTramOutSec = ytTramInSec + ytTramActualDur;
+                                }
+                                ytTramMedia.setInPoint(Math.round(ytTramInSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                                ytTramMedia.setOutPoint(Math.round(ytTramOutSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                                var resYTT = insertAndRenameClip(tramTrack, ytTramMedia, tramInsertPos, tramClipLabel, ytTramActualDur, false);
+                                if (!resYTT.error) {
+                                    tramInserted++;
+                                    tramInsertPos += (resYTT.actualDur > 0 ? resYTT.actualDur : ytTramActualDur);
+                                    actions.push("Tr\u00e1m V2 YouTube " + ytTramName + " (" + ytTramActualDur.toFixed(1) + "s)");
+                                }
+                            } catch(eYTT) { warnings.push("L\u1ed7i ch\u00e8n YouTube tr\u00e1m: " + eYTT.toString()); }
+                        }
+                    } else {
+                        // Fallback: Black Video
+                        warnings.push("Kh\u00f4ng t\u1ea3i \u0111\u01b0\u1ee3c YouTube tr\u00e1m (c\u1ea7n yt-dlp): " + tUrl + " \u2192 d\u00f9ng Black Video");
+                        var tBlackItemFB = getOrCreateBlackVideoItem(_session.footageFolder);
+                        if (tBlackItemFB) {
+                            try {
+                                tBlackItemFB.setInPoint("0", MEDIA_TYPE);
+                                tBlackItemFB.setOutPoint(Math.round(tClipDur * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                                var resTBFB = insertAndRenameClip(tramTrack, tBlackItemFB, tramInsertPos, tramClipLabel, tClipDur, true);
+                                if (!resTBFB.error) { tramInserted++; tramInsertPos += tClipDur; }
+                            } catch(etbfb) {}
+                        }
+                    }
+                } else if (isEnvatoUrl(tUrl)) {
+                    if (!enableEnvato) { skippedTypes.push("Envato Trám"); continue; }
+                    // === ENVATO TRAM: tai video chat luong cao nhat ve Footage/ va cat tram V2 ===
+                    var tEnvKey = getEnvatoItemKey(tUrl);
+                    var tEnvFile = findCachedEnvatoFile(dlFolder, tUrl);
+                    if (tEnvFile && tEnvFile.exists) {
+                        var tEnvFs = tEnvFile.fsName;
+                        var tEnvMedia = _session.itemCache[tEnvFs];
+                        if (tEnvMedia === undefined) {
+                            tEnvMedia = importAndGetProjectItem(tEnvFs);
+                            _session.itemCache[tEnvFs] = tEnvMedia;
+                        }
+                        if (tEnvMedia) {
+                            try {
+                                waitForMediaReady(tEnvMedia, 10000);
+                                var tEnvDur = getProjectItemDuration(tEnvMedia);
+                                var tEnvInSec, tEnvOutSec;
+                                var tEnvNorm = resolveNormalizedTimeRange(tramTimeInfo, tEnvDur, defaultDuration);
+                                if (tEnvNorm) {
+                                    tEnvInSec = tEnvNorm.inSec; tEnvOutSec = tEnvNorm.outSec;
+                                } else if (tramTimeInfo.mode === "full") {
+                                    tEnvInSec = tramTimeInfo.inSec; tEnvOutSec = tramTimeInfo.outSec;
+                                } else if (tramTimeInfo.mode === "reversed") {
+                                    tEnvInSec = tramTimeInfo.inSec; tEnvOutSec = tramTimeInfo.outSec;
+                                } else if (tramTimeInfo.mode === "start") {
+                                    var tEnvSingleDur = singleTimeEnabled ? singleTimeDuration : defaultDuration;
+                                    tEnvInSec = Math.max(0, tramTimeInfo.inSec - tEnvSingleDur);
+                                    tEnvOutSec = tramTimeInfo.inSec;
+                                } else {
+                                    if (noTimecodeMode === "full" && tEnvDur !== null && tEnvDur > 0) { tEnvInSec = 0; tEnvOutSec = tEnvDur; }
+                                    else if (tEnvDur === null || tEnvDur <= 0) { tEnvInSec = 0; tEnvOutSec = noTimecodeDuration; }
+                                    else if (tEnvDur <= noTimecodeDuration) { tEnvInSec = 0; tEnvOutSec = tEnvDur; }
+                                    else { var tEnvMid = tEnvDur / 2; tEnvInSec = tEnvMid - noTimecodeDuration / 2; tEnvOutSec = tEnvMid + noTimecodeDuration / 2; }
+                                }
+                                var tEnvActualDur = tEnvOutSec - tEnvInSec;
+                                if (v1ClipDuration > 0) {
+                                    var remV1Env = Math.max(0, (rowStartTime + v1ClipDuration) - tramInsertPos);
+                                    tEnvActualDur = Math.min(tEnvActualDur, remV1Env);
+                                    if (tEnvActualDur <= 0.05) {
+                                        warnings.push("Trám Envato " + tEnvKey + ": vượt quá độ dài V1 nên bỏ qua");
+                                        continue;
+                                    }
+                                    tEnvOutSec = tEnvInSec + tEnvActualDur;
+                                }
+                                tEnvMedia.setInPoint(Math.round(tEnvInSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                                tEnvMedia.setOutPoint(Math.round(tEnvOutSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                                var roseTramEnv = (tramTimeInfo.mode === "auto" || tramTimeInfo.mode === "start" || tramTimeInfo.mode === "reversed");
+                                var tEnvLabel = labelEnabled ? (rowNumber + "_Tram" + tSubSuffix + "_Envato_" + tEnvKey.substring(0, 8)) : null;
+                                var resTEnv = insertAndRenameClip(tramTrack, tEnvMedia, tramInsertPos, tEnvLabel, tEnvActualDur, roseTramEnv);
+                                if (!resTEnv.error) {
+                                    tramInserted++;
+                                    tramInsertPos += (resTEnv.actualDur > 0 ? resTEnv.actualDur : tEnvActualDur);
+                                    actions.push("Trám V2 Envato " + (tEnvLabel || tEnvFile.name) + " (" + tEnvActualDur.toFixed(1) + "s)");
+                                }
+                            } catch (eTEnv) { warnings.push("Lỗi chèn Envato trám: " + eTEnv.toString()); }
+                        }
+                    } else {
+                        warnings.push("Không tải được Envato trám (" + tEnvKey + ") → dùng Black Video tạm");
+                        var tBlackItem = getOrCreateBlackVideoItem(_session.footageFolder);
+                        if (tBlackItem) {
+                            try {
+                                tBlackItem.setInPoint("0", MEDIA_TYPE);
+                                tBlackItem.setOutPoint(Math.round(tClipDur * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                                var resTB = insertAndRenameClip(tramTrack, tBlackItem, tramInsertPos, tramClipLabel, tClipDur, tramTimeInfo.mode !== "full");
+                                if (!resTB.error) {
+                                    tramInserted++;
+                                    tramInsertPos += (resTB.actualDur > 0 ? resTB.actualDur : tClipDur);
+                                    actions.push("Tr\u00e1m V2 Black Envato (" + tClipDur.toFixed(1) + "s)");
+                                }
+                            } catch(etb) {}
+                        }
+                    }
+                    if (false) {
                     var tBlackItem = getOrCreateBlackVideoItem(_session.footageFolder);
                     if (tBlackItem) {
                         try {
@@ -1903,9 +2760,10 @@ function cep_processSingleRow(rowJsonStr) {
                             if (!resTB.error) {
                                 tramInserted++;
                                 tramInsertPos += (resTB.actualDur > 0 ? resTB.actualDur : tClipDur);
-                                actions.push("Trám V2 Black (" + tClipDur.toFixed(1) + "s)");
+                                actions.push("Tr\u00e1m V2 Black Envato (" + tClipDur.toFixed(1) + "s)");
                             }
                         } catch(etb) {}
+                    }
                     }
                 } else {
                     var tExt = getExtensionFromUrl(tUrl);
@@ -1913,7 +2771,7 @@ function cep_processSingleRow(rowJsonStr) {
                     var tFolderFs = _session.footageFolder ? _session.footageFolder.fsName : (new File(app.project.path).parent.fsName);
                     var tDownloadedFile = downloadFileFromUrl(tUrl, tFolderFs + "/" + tLocalFileName);
                     if (tDownloadedFile) {
-                        downloadsDone++;
+                        if (typeof ytTramExisted === "undefined" || !ytTramExisted) downloadsDone++;
                         var tMediaItem = importAndGetProjectItem(tDownloadedFile.fsName);
                         if (tMediaItem) {
                             try {
@@ -1931,16 +2789,55 @@ function cep_processSingleRow(rowJsonStr) {
                 }
             }
         }
-        else if (tramCodeRaw !== "" && tramTimeInfo !== null) {
-            var tramSourceToUse = (tramSourceRaw !== "") ? tramSourceRaw : (_session.lastTramFolder !== "" ? _session.lastTramFolder : _session.lastSourceFolder);
-            var tramFileCodes = [], tcIdx, stc;
-            if (isFullFilePath(tramCodeRaw)) {
-                tramFileCodes = [stripQuotes(tramCodeRaw)];   // ca duong dan: khong tach theo dau phay
-            } else {
-                var rawTramCodes = tramCodeRaw.split(/[\r\n,;]+/);
-                for (tcIdx = 0; tcIdx < rawTramCodes.length; tcIdx++) { stc = stripQuotes(rawTramCodes[tcIdx]); if (stc !== "") tramFileCodes.push(stc); }
+        else if (isFolderOnlyV2 && !enableNas) {
+            skippedTypes.push("File NAS Trám");
+        } else if (isFolderOnlyV2) {
+            // === FOLDER-ONLY TRAM: quét folder lấy ngẫu nhiên file trám ===
+            var randCountV2 = _session.config.folderRandomCount || 3;
+            var randDurV2 = _session.config.folderRandomDuration || 2;
+            var chosenTram = getPickedFolderFiles("V2_" + rowNumber, tramSourceRaw, randCountV2);
+            if (chosenTram.length > 0) {
+                for (var trfi = 0; trfi < chosenTram.length; trfi++) {
+                    var tcFile = chosenTram[trfi];
+                    var tClipDur = getTramDur(randDurV2);
+                    if (v1ClipDuration > 0 && tClipDur <= 0.05) break;
+
+                    var actualTcFile = tcFile;
+                    if (enableCopy && _session.footageFolder) {
+                        var tcr = copyFileToFootage(tcFile, _session.footageFolder);
+                        if (tcr && tcr.file) { actualTcFile = tcr.file; if (tcr.isNew) copiesDone++; }
+                    }
+                    var tMediaItem = importAndGetProjectItem(actualTcFile.fsName);
+                    if (tMediaItem) {
+                        try {
+                            waitForMediaReady(tMediaItem, 6000);
+                            var tTotDur = getProjectItemDuration(tMediaItem);
+                            var tInSec = 0, tOutSec = tClipDur;
+                            if (tTotDur && tTotDur > tClipDur) {
+                                var tMaxSt = Math.max(0, tTotDur - tClipDur);
+                                tInSec = Math.floor(Math.random() * tMaxSt);
+                                tOutSec = tInSec + tClipDur;
+                            }
+                            tMediaItem.setInPoint(Math.round(tInSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                            tMediaItem.setOutPoint(Math.round(tOutSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                            var tSubSuff = (chosenTram.length > 1) ? ("." + (trfi + 1)) : "";
+                            var tLabel = labelEnabled ? (rowNumber + "_Tram" + tSubSuff + "_" + shortCodeLabel(tcFile.name)) : null;
+                            var resTRand = insertAndRenameClip(tramTrack, tMediaItem, tramInsertPos, tLabel, tClipDur, false);
+                            if (!resTRand.error) {
+                                tramInserted++;
+                                tramInsertPos += (resTRand.actualDur > 0 ? resTRand.actualDur : tClipDur);
+                                actions.push("Folder V2 " + (tLabel || tcFile.name) + " (" + tClipDur + "s)");
+                            }
+                        } catch(eTRand) { warnings.push("Lỗi chèn trám ngẫu nhiên: " + eTRand.toString()); }
+                    }
+                }
             }
-            if (tramFileCodes.length === 0) tramFileCodes = [tramCodeRaw];
+        }
+        else if (tramCodeRaw !== "" && tramTimeInfo !== null && !enableNas) {
+            skippedTypes.push("File NAS Trám");
+        } else if (tramCodeRaw !== "" && tramTimeInfo !== null) {
+            var tramSourceToUse = (tramSourceRaw !== "") ? tramSourceRaw : (_session.lastTramFolder !== "" ? _session.lastTramFolder : _session.lastSourceFolder);
+            var tramFileCodes = parseRowFileCodes(tramCodeRaw).fileCodes;
 
             for (var tfIdx = 0; tfIdx < tramFileCodes.length; tfIdx++) {
                 var singleTramCode = tramFileCodes[tfIdx];
@@ -1960,6 +2857,10 @@ function cep_processSingleRow(rowJsonStr) {
                     }
                 }
                 else if (tramTimeInfo.mode === "full") { tInSec = tramTimeInfo.inSec; tOutSec = tramTimeInfo.outSec; }
+                else if (tramTimeInfo.mode === "reversed") {
+                    tInSec = tramTimeInfo.inSec; tOutSec = tramTimeInfo.outSec;
+                    warnings.push("Timecode trám bị nhập ngược tại dòng " + rowNumber + ": đã tự sửa");
+                }
                 else if (tramTimeInfo.mode === "start") {
                     var tramSingleDuration = singleTimeEnabled ? singleTimeDuration : defaultDuration;
                     tInSec = Math.max(0, tramTimeInfo.inSec - tramSingleDuration);
@@ -1988,7 +2889,8 @@ function cep_processSingleRow(rowJsonStr) {
                     waitForMediaReady(tramResult.projectItem, 6000);
                     tramResult.projectItem.setInPoint(Math.round(tInSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
                     tramResult.projectItem.setOutPoint(Math.round(tOutSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
-                    var resTram = insertAndRenameClip(tramTrack, tramResult.projectItem, tramInsertPos, tramLabel, tDurActual, tramTimeInfo.mode !== "full");
+                    var roseTram = (tramTimeInfo.mode === "auto" || tramTimeInfo.mode === "start" || tramTimeInfo.mode === "reversed");
+                    var resTram = insertAndRenameClip(tramTrack, tramResult.projectItem, tramInsertPos, tramLabel, tDurActual, roseTram);
                     if (resTram.warning) warnings.push(resTram.warning);
                     if (!resTram.error) {
                         tramInserted++;
@@ -2003,6 +2905,7 @@ function cep_processSingleRow(rowJsonStr) {
     var rowEndTimeV1 = (clipsInserted > 0) ? getTrackEndSeconds(mainTrack) : rowStartTime;
     var rowEndTimeTram = (tramInserted > 0) ? tramInsertPos : rowStartTime;
     _session.timelineCursorSec = Math.max(rowEndTimeV1, rowEndTimeTram);
+    if (clipsInserted === 0 && tramInserted === 0 && warnings.length === 0 && skippedTypes.length > 0) return toJson({ status: "skipped", rowNumber: rowNumber, details: "Bỏ qua (" + skippedTypes.join(", ") + " đang tắt)", clipCount: 0, tramCount: 0, copyCount: 0, downloadCount: 0 });
 
     return toJson({
         status: (warnings.length > 0) ? "warning" : "success",
@@ -2077,27 +2980,22 @@ function readTextFile(path) {
  *   - file co (flag) do script ghi ra khi ket thuc: "OK <bytes>" hoac "FAIL ..."
  *   - nhip tim: script cap nhat so byte da copy vao file tien do moi ~0.7s
  */
-function waitForScriptCopy(flagPath, progressPath, maxMs) {
-    var waited = 0, step = 500, startWaitMs = 0, stallMs = 0, lastCopied = -1;
+function waitForScriptCopy(flagPath, destFile, srcLen, maxMs) {
+    var waited = 0, step = 100;
     while (waited < maxMs) {
-        var flagTxt = readTextFile(flagPath);
-        if (flagTxt !== null) {
-            var t = trim(flagTxt);
-            return { done: (t.indexOf("OK") === 0), info: t };
+        var flagFile = new File(flagPath);
+        if (flagFile.exists) {
+            var flagTxt = readTextFile(flagPath);
+            if (flagTxt !== null) {
+                var t = trim(flagTxt);
+                var ok = (t.indexOf("OK") === 0);
+                if (ok && srcLen > 0) {
+                    var df = new File(destFile.absoluteURI);
+                    if (!df.exists || fileSizeOf(df) !== srcLen) ok = false;
+                }
+                return { done: ok, info: t };
+            }
         }
-
-        var prog = parseJson(readTextFile(progressPath) || "");
-        if (prog && prog.byScript) {
-            var cur = (typeof prog.copied === "number") ? prog.copied : -1;
-            if (cur === lastCopied) {
-                stallMs += step;
-                if (stallMs >= 600000) return { done: false, info: "script copy đứng yên 10 phút" };
-            } else { stallMs = 0; lastCopied = cur; }
-        } else {
-            startWaitMs += step;
-            if (startWaitMs >= 180000) return { done: false, info: "script copy không khởi động được (chờ 3 phút)" };
-        }
-
         try { $.sleep(step); } catch (e) { return { done: false, info: "lỗi chờ: " + e.toString() }; }
         waited += step;
     }
@@ -2118,118 +3016,93 @@ function writeTextFile(path, content, withBom) {
 }
 
 /**
- * Copy qua PowerShell: sinh 1 file .ps1 + 1 file .bat roi File.execute() file .bat.
- * Day la cach DUY NHAT chay duoc lenh he thong tu ExtendScript cua Premiere Pro
- * (Premiere khong co system.callSystem() cua After Effects, cung khong co app.system()).
- * .ps1 ghi kem BOM de PowerShell doc dung duong dan tieng Viet.
+ * Copy truc tiep qua robocopy.exe trong .bat (KHONG khoi dong PowerShell de tranh 1.5-2s cold start
+ * tren moi file, KHONG dung /J unbuffered I/O lam cham cache Windows, va ghi log tien do % that
+ * cua robocopy de thanh tien do hien thi dung MB/s).
  */
 function copyViaScriptFile(srcPath, destPath, srcLen, destFile) {
-    var stamp = String(new Date().getTime());
+    var stamp = String(new Date().getTime()) + "_" + Math.floor(Math.random() * 10000);
     var tmp = Folder.temp.fsName;
-    var ps1Path = tmp + "/autoimportcut_v2_copy_" + stamp + ".ps1";
     var batPath = tmp + "/autoimportcut_v2_copy_" + stamp + ".bat";
     var flagPath = tmp + "/autoimportcut_v2_copy_" + stamp + ".done";
+    var roboLogPath = tmp + "/autoimportcut_v2_copy_" + stamp + ".robolog";
     var progPath = copyProgressFilePath();
 
-    function q(s) { return "'" + String(s).replace(/'/g, "''") + "'"; }
+    var srcWin = String(srcPath).replace(/\//g, "\\");
+    var dstWin = String(destPath).replace(/\//g, "\\");
+    var flagWin = String(flagPath).replace(/\//g, "\\");
+    var roboLogWin = String(roboLogPath).replace(/\//g, "\\");
 
-    // PowerShell lam chu toan bo: copy, bao tien do that (panel doc file nay), va tu XAC MINH
-    // dung luong. ExtendScript chi doc ket qua cuoi cung -> khong con phu thuoc File.length.
-    var ps = [
-        "$ErrorActionPreference = 'SilentlyContinue'",
-        "$src = " + q(srcPath),
-        "$dst = " + q(destPath),
-        "$flag = " + q(flagPath),
-        "$prog = " + q(String(progPath).replace(/\//g, "\\")),
-        "$enc = New-Object System.Text.UTF8Encoding($false)",
-        "$name = Split-Path -Leaf $dst",
-        "$total = 0",
-        "if (Test-Path -LiteralPath $src) { $total = (Get-Item -LiteralPath $src).Length }",
-        "$dir = Split-Path -LiteralPath $dst",
-        "if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }",
-        "function Save-Prog($copied, $state) {",
-        "  $o = [ordered]@{ state = $state; name = $name; dest = $dst; total = $total; copied = $copied; byScript = $true }",
-        "  try { [System.IO.File]::WriteAllText($prog, ($o | ConvertTo-Json -Compress), $enc) } catch {}",
-        "}",
-        "Save-Prog 0 'copying'",
-        // Copy theo tung khoi 8 MB de bao duoc so byte CHINH XAC theo thoi gian thuc.
-        // (robocopy nhanh nhung Windows cap nhat dung luong file dich rat tre -> % bi giat 0 roi nhay 100.)
-        "$part = $dst + '.importcut.part'",
-        "$streamOk = $false",
-        "$fsIn = $null; $fsOut = $null",
-        "try {",
-        "  if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force }",
-        "  $fsIn = [System.IO.File]::OpenRead($src)",
-        "  $fsOut = [System.IO.File]::Create($part)",
-        "  $buf = New-Object byte[] 8388608",
-        "  $copied = 0",
-        "  $sw = [System.Diagnostics.Stopwatch]::StartNew()",
-        "  $lastMs = 0",
-        "  while (($n = $fsIn.Read($buf, 0, $buf.Length)) -gt 0) {",
-        "    $fsOut.Write($buf, 0, $n)",
-        "    $copied += $n",
-        "    if (($sw.ElapsedMilliseconds - $lastMs) -ge 300) { Save-Prog $copied 'copying'; $lastMs = $sw.ElapsedMilliseconds }",
-        "  }",
-        "  $fsOut.Close(); $fsOut = $null",
-        "  $fsIn.Close(); $fsIn = $null",
-        "  if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Force }",
-        "  Move-Item -LiteralPath $part -Destination $dst -Force",
-        "  $streamOk = $true",
-        "} catch {",
-        "  if ($fsOut -ne $null) { $fsOut.Close() }",
-        "  if ($fsIn -ne $null) { $fsIn.Close() }",
-        "  if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force }",
-        "}",
-        // Du phong: robocopy (chiu duoc file dang bi khoa, o dia mang chap chon)
-        "if (-not $streamOk) {",
-        "  $srcDir = Split-Path -LiteralPath $src",
-        "  $srcName = Split-Path -Leaf $src",
-        "  if ($srcName -eq $name) {",
-        "    $argStr = '\"{0}\" \"{1}\" \"{2}\" /NJH /NJS /NP /NDL /R:1 /W:2 /J' -f $srcDir, $dir, $srcName",
-        "    $proc = Start-Process -FilePath 'robocopy.exe' -ArgumentList $argStr -PassThru -WindowStyle Hidden",
-        "    while (-not $proc.HasExited) {",
-        "      $cur = 0",
-        "      if (Test-Path -LiteralPath $dst) { $cur = (Get-Item -LiteralPath $dst).Length }",
-        "      Save-Prog $cur 'copying'",
-        "      Start-Sleep -Milliseconds 700",
-        "    }",
-        "  }",
-        "}",
-        "$dstLen = 0",
-        "if (Test-Path -LiteralPath $dst) { $dstLen = (Get-Item -LiteralPath $dst).Length }",
-        "if ($dstLen -ne $total) {",
-        "  Copy-Item -LiteralPath $src -Destination $dst -Force",
-        "  $dstLen = 0",
-        "  if (Test-Path -LiteralPath $dst) { $dstLen = (Get-Item -LiteralPath $dst).Length }",
-        "}",
-        "Save-Prog $dstLen 'idle'",
-        "if ($total -gt 0 -and $dstLen -eq $total) { \"OK $dstLen\" | Out-File -LiteralPath $flag -Encoding ascii }",
-        "else { \"FAIL nguon=$total dich=$dstLen\" | Out-File -LiteralPath $flag -Encoding ascii }",
-        ""
-    ].join("\r\n");
+    var lastSlashSrc = srcWin.lastIndexOf("\\");
+    var srcDir = (lastSlashSrc >= 0) ? srcWin.substring(0, lastSlashSrc) : srcWin;
+    var srcName = (lastSlashSrc >= 0) ? srcWin.substring(lastSlashSrc + 1) : srcWin;
 
-    var bat = [
+    var lastSlashDst = dstWin.lastIndexOf("\\");
+    var dstDir = (lastSlashDst >= 0) ? dstWin.substring(0, lastSlashDst) : dstWin;
+    var dstName = (lastSlashDst >= 0) ? dstWin.substring(lastSlashDst + 1) : dstWin;
+
+    // Tranh loi robocopy khi duong dan ket thuc bang dau \ (vd "D:\") làm hỏng dấu ngoặc kép \"
+    function cleanRoboDir(d) {
+        var s = String(d).replace(/\\+$/, "");
+        if (/^[A-Za-z]:$/.test(s)) return s + "\\.";
+        return s;
+    }
+
+    try {
+        writeTextFile(progPath, toJson({
+            state: "copying",
+            name: dstName,
+            dest: destFile.fsName,
+            total: (srcLen > 0 ? srcLen : 0),
+            copied: 0,
+            roboLog: roboLogPath,
+            byScript: true,
+            startedAt: (new Date()).getTime()
+        }));
+    } catch (eP) {}
+
+    var batLines = [
         "@echo off",
         "chcp 65001 >nul",
-        'powershell -NoProfile -ExecutionPolicy Bypass -File "' + ps1Path.replace(/\//g, "\\") + '"',
-        "exit",
-        ""
-    ].join("\r\n");
+        'if not exist "' + dstDir + '" mkdir "' + dstDir + '" >nul 2>&1'
+    ];
 
-    if (!writeTextFile(ps1Path, ps, true)) return { ok: false, error: "không ghi được file .ps1 tạm" };
-    if (!writeTextFile(batPath, bat, false)) return { ok: false, error: "không ghi được file .bat tạm" };
+    if (srcName.toLowerCase() === dstName.toLowerCase()) {
+        batLines.push(
+            'robocopy "' + cleanRoboDir(srcDir) + '" "' + cleanRoboDir(dstDir) + '" "' + srcName + '" /NJH /NJS /NDL /NC /NS /R:1 /W:1 > "' + roboLogWin + '" 2>&1',
+            "if %ERRORLEVEL% LSS 8 (",
+            '  echo OK> "' + flagWin + '"',
+            ") else (",
+            '  copy /Y /B "' + srcWin + '" "' + dstWin + '" >nul 2>&1',
+            '  if exist "' + dstWin + '" (echo OK> "' + flagWin + '") else (echo FAIL robocopy exit=%ERRORLEVEL%> "' + flagWin + '")',
+            ")"
+        );
+    } else {
+        batLines.push(
+            'copy /Y /B "' + srcWin + '" "' + dstWin + '" >nul 2>&1',
+            'if exist "' + dstWin + '" (echo OK> "' + flagWin + '") else (echo FAIL copy exit=%ERRORLEVEL%> "' + flagWin + '")'
+        );
+    }
+    batLines.push("exit", "");
+
+    if (!writeTextFile(batPath, batLines.join("\r\n"), false)) {
+        return { ok: false, error: "không ghi được file .bat tạm" };
+    }
 
     var launched = false;
     try { launched = new File(batPath).execute(); } catch (eX) { launched = false; }
-    if (!launched) return { ok: false, error: "File.execute() không chạy được script copy" };
+    if (!launched) {
+        try { new File(batPath).remove(); } catch (e0) {}
+        return { ok: false, error: "File.execute() không chạy được script copy" };
+    }
 
-    var res = waitForScriptCopy(flagPath, progPath, 14400000);
+    var res = waitForScriptCopy(flagPath, destFile, srcLen, 14400000);
 
-    try { new File(ps1Path).remove(); } catch (e1) {}
-    try { new File(batPath).remove(); } catch (e2) {}
-    try { new File(flagPath).remove(); } catch (e3) {}
+    try { new File(batPath).remove(); } catch (e1) {}
+    try { new File(flagPath).remove(); } catch (e2) {}
+    try { new File(roboLogPath).remove(); } catch (e3) {}
 
-    return res.done ? { ok: true, how: "PowerShell/robocopy" } : { ok: false, error: res.info };
+    return res.done ? { ok: true, how: "robocopy" } : { ok: false, error: res.info };
 }
 
 /**
@@ -2245,9 +3118,12 @@ function osCopyFile(srcFile, destFile) {
 
     // 1) Host co san API chay lenh (After Effects: system.callSystem) -> dung truc tiep cho nhanh.
     if (isWindowsOS()) {
-        var probe = runShell('cmd.exe /c robocopy "' + srcPath.substring(0, srcPath.lastIndexOf("\\")) + '" "' +
-                             destPath.substring(0, destPath.lastIndexOf("\\")) + '" "' +
-                             srcPath.substring(srcPath.lastIndexOf("\\") + 1) + '" /NJH /NJS /NP /NDL /R:1 /W:2 /J');
+        var sDir = srcPath.substring(0, srcPath.lastIndexOf("\\")).replace(/\\+$/, "");
+        var dDir = destPath.substring(0, destPath.lastIndexOf("\\")).replace(/\\+$/, "");
+        if (/^[A-Za-z]:$/.test(sDir)) sDir += "\\.";
+        if (/^[A-Za-z]:$/.test(dDir)) dDir += "\\.";
+        var probe = runShell('cmd.exe /c robocopy "' + sDir + '" "' + dDir + '" "' +
+                             srcPath.substring(srcPath.lastIndexOf("\\") + 1) + '" /NJH /NJS /NP /NDL /R:1 /W:1');
         if (probe.ok) {
             tried.push("robocopy: " + probe.out);
             if (waitForCopyDone(destFile, srcLen, null, 14400000)) return { ok: true, how: "robocopy" };
@@ -2266,8 +3142,7 @@ function osCopyFile(srcFile, destFile) {
 
 /**
  * Copy 1 file mot cach chac chan, tra ve { ok, how, error }.
- * File.copy() cua ExtendScript co the that bai hoac tao file cut ngang (vd file 1 byte)
- * voi file lon / o dia mang / file dang bi Premiere khoa -> fallback sang lenh copy cua he dieu hanh.
+ * File.copy() cua ExtendScript rat cham voi file video va treo UI Premiere Pro -> chi dung cho file < 256 KB.
  */
 function robustCopy(srcFile, destFile) {
     var lastErr = "";
@@ -2280,9 +3155,9 @@ function robustCopy(srcFile, destFile) {
 
     beginCopyReport(srcFile, destFile);
 
-    // File.copy() cua ExtendScript chi dung cho file NHO (< 300 MB): voi file lon no
-    // that bai hoac tao ra file cut ngang ma van bao thanh cong.
-    var tooBigForExtendScript = (srcLen < 0 || srcLen > 314572800);
+    // Chi dung File.copy() cua ExtendScript cho file cuc nho (< 256 KB).
+    // Voi file video, dung robocopy cua Windows de dat toc do toi da.
+    var tooBigForExtendScript = (srcLen < 0 || srcLen > 262144);
 
     // 1) File.copy() cua ExtendScript (dich phai chua ton tai)
     if (!tooBigForExtendScript) {
@@ -2297,10 +3172,10 @@ function robustCopy(srcFile, destFile) {
             }
         } catch (e1) { lastErr = "File.copy(): " + e1.toString(); }
     } else {
-        lastErr = "File " + Math.round(srcLen / 1048576) + " MB - quá lớn cho File.copy()";
+        lastErr = "File " + Math.round(srcLen / 1048576) + " MB - dùng OS copy";
     }
 
-    // 2) Fallback: lenh copy cua he dieu hanh (robocopy / copy / PowerShell)
+    // 2) Lenh copy cua he dieu hanh (robocopy / copy)
     try {
         try { var d0 = new File(destFile.absoluteURI); if (d0.exists) d0.remove(); } catch (eR2) {}
         var os = osCopyFile(srcFile, destFile);
@@ -2399,8 +3274,9 @@ function cep_scanTimelineSources(configJsonStr) {
                         if (sf.exists) { sizeBytes = fileSizeOf(sf); if (sizeBytes < 0) sizeBytes = 0; sizeMB = Math.round((sizeBytes / 1048576) * 10) / 10; }
                     } catch (eSz) {}
 
-                    _relink.files.push({ mediaPath: mp, normSrc: srcNorm, destPath: joinPath(footageFolder.fsName, name), name: name });
-                    list.push({ name: name, sizeMB: sizeMB, sizeBytes: sizeBytes, mediaPath: mp });
+                    var destFull = joinPath(footageFolder.fsName, name);
+                    _relink.files.push({ mediaPath: mp, normSrc: srcNorm, destPath: destFull, name: name });
+                    list.push({ name: name, sizeMB: sizeMB, sizeBytes: sizeBytes, mediaPath: mp, destPath: destFull });
                 } catch (eClip) {
                     warnings.push("Kh\u00f4ng \u0111\u1ecdc \u0111\u01b0\u1ee3c 1 clip: " + eClip.toString());
                 }
@@ -2424,7 +3300,7 @@ function cep_scanTimelineSources(configJsonStr) {
 /**
  * BUOC 2 - Copy + relink DUNG 1 file theo index tu danh sach da quet.
  */
-function cep_copyRelinkOne(idxStr) {
+function cep_copyRelinkOne(idxStr, preCopiedFlag) {
     var job = null;
     try {
         var i = parseInt(idxStr, 10);
@@ -2436,7 +3312,7 @@ function cep_copyRelinkOne(idxStr) {
 
         var destFile = new File(job.destPath);
         var srcLen = fileSizeOf(srcFile);
-        var copied = false, note = "";
+        var copied = !!preCopiedFlag, note = "";
 
         var needCopy = true;
         if (destFile.exists) {
@@ -2517,5 +3393,6 @@ function cep_copyAndRelinkFootage(configJsonStr) {
 function cep_finishSession() {
     _session.active = false;
     _session.fileCache = {}; _session.itemCache = {}; _session.durationCache = {};
+    _session.folderPickCache = {}; _session.csvRows = null;
     return toJson({ success: true });
 }

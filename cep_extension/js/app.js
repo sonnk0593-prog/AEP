@@ -10,7 +10,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "2.1.7";
+var APP_VERSION = "2.3.3";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -25,8 +25,11 @@ function ensureOwnScript(cb) {
         var loaded = String(b === undefined || b === null ? "" : b).replace(/^"|"$/g, "");
         if (loaded === "" || loaded === APP_VERSION) { cb(true); return; }
 
-        var sameMajor = loaded.split(".")[0] === APP_VERSION.split(".")[0];
-        if (sameMajor) {
+        if (loaded.indexOf("EvalScript error") !== -1) {
+            showAlert("Lỗi nạp script ExtendScript",
+                "Premiere Pro gặp lỗi khi kiểm tra phiên bản ExtendScript (EvalScript error).\n\n" +
+                "<strong>Cách xử lý:</strong> Hãy đóng panel và mở lại (hoặc khởi động lại Premiere Pro) để nạp lại script.", "warning");
+        } else if (sameMajor) {
             // Cùng dòng V2 nhưng lệch số -> gần như chắc chắn do file .jsx vừa đổi mà chưa nạp lại.
             showAlert("Script chưa được nạp lại",
                 "Panel là bản <strong>" + escapeHtml(APP_VERSION) + "</strong> nhưng script đang chạy trong Premiere là bản <strong>" +
@@ -92,6 +95,9 @@ var state = {
     ,checkProgressStarted: 0
     ,checkCancelled: false
     ,checkInProgress: false
+    ,envatoFiles: {}
+    ,footageFolderPath: ""
+    ,mediaTypeEnabled: { nas: true, envato: true, youtube: true }
 };
 
 // =========================================================================
@@ -164,10 +170,11 @@ var GeminiAPI = (function () {
             "timeCol phải là cột timecode nằm cùng nhóm với cột mã file (vd 'TIME SOURCE CHÍNH').\n\n" +
 
             "=== MÔ TẢ TỪNG TRƯỜNG ===\n" +
-            "sourceCol — thư mục chứa video của source chính: \\\\server\\..., D:\\..., hoặc link http/https.\n" +
+            "sourceCol — thư mục chứa video của source chính: \\\\server\\..., D:\\..., hoặc link http/https (ví dụ link Envato).\n" +
             "          ĐẶT -1 nếu cột file đã chứa sẵn ĐƯỜNG DẪN ĐẦY ĐỦ tới file (kể cả khi ô có dấu nháy bao quanh).\n" +
+            "          LƯU Ý: Nếu một nhóm chỉ có 1 cột media duy nhất chứa link Envato (https://app.envato.com/... hoặc https://elements.envato.com/...) hoặc đường dẫn folder (không có cột mã file riêng), hãy đặt cả sourceCol và codeCol cùng trỏ vào cột đó.\n" +
             "codeCol — mã hoặc tên file: C0682, DJI_20260818150455_0052_D, GH010234, GOPR0001,\n" +
-            "          hoặc tên file đầy đủ 'C0704.MP4', hoặc cả đường dẫn đầy đủ tới file.\n" +
+            "          hoặc tên file đầy đủ 'C0704.MP4', cả đường dẫn đầy đủ tới file, hoặc link video Envato/YouTube.\n" +
             "          Một ô có thể chứa nhiều mã trên nhiều dòng.\n" +
             "timeCol — timecode cắt: '0:07 - 0:19', '00:01:23 - 00:02:45', hoặc chỉ 1 mốc '00:06'.\n" +
             "          Đặt -1 NẾU BẢNG KHÔNG CÓ cột timecode nào (hoàn toàn hợp lệ).\n" +
@@ -223,7 +230,7 @@ var GeminiAPI = (function () {
             "- 'hết', 'cuối', 'đến hết', 'đến cuối' là mốc END, không tự đoán số giây. " +
             "Ví dụ 'đầu - 00:30' thành '00:00 - 00:30'; '00:30 - hết' thành '00:30 - END'; 'đầu - cuối' thành '00:00 - END'.\n" +
             "- Giữ nguyên timecode số đã đúng, chỉ chuẩn hóa về MM:SS hoặc HH:MM:SS và dấu ' - '.\n" +
-            "- Chuẩn hóa đường dẫn: bỏ dấu nháy thừa, dùng dấu gạch chéo ngược cho đường dẫn Windows, không đổi nội dung đường dẫn.\n" +
+            "- Chuẩn hóa đường dẫn: bỏ dấu nháy thừa, dùng dấu gạch chéo ngược cho đường dẫn Windows, không đổi nội dung đường dẫn. TUYỆT ĐỐI giữ nguyên dấu '/' cho các đường link URL http:// hoặc https:// (ví dụ link Envato).\n" +
             "- Chuẩn hóa mã file: bỏ khoảng trắng/dấu nháy thừa, giữ nguyên mã đầy đủ; không tự thêm ký tự hoặc đoán tên file.\n" +
             "- Không sửa nội dung lời thoại, header hoặc các cột khác. Nếu không cần sửa, không đưa dòng đó vào kết quả.\n\n" +
             "CSV:\n" + csvContent + "\n\nTrả về ví dụ: [{\"rowIndex\":1,\"time\":\"00:00 - 00:30\"}]";
@@ -309,6 +316,8 @@ var dom = {
     radioCenterTime: document.getElementById("radioCenterTime"),
     radioFullVideo: document.getElementById("radioFullVideo"),
     txtCenterTimeSec: document.getElementById("txtCenterTimeSec"),
+    txtFolderRandomCount: document.getElementById("txtFolderRandomCount"),
+    txtFolderRandomDuration: document.getElementById("txtFolderRandomDuration"),
 
     // Nhận diện cột: tự động / thủ công
     btnColAuto: document.getElementById("btnColAuto"),
@@ -375,6 +384,9 @@ var dom = {
     aiStatusBadge: document.getElementById("aiStatusBadge"),
     btnOpenApi: document.getElementById("btnOpenApi"),
     apiBtnDot: document.getElementById("apiBtnDot"),
+    btnEnvatoAuth: document.getElementById("btnEnvatoAuth"),
+    envatoBtnDot: document.getElementById("envatoBtnDot"),
+    envatoBtnText: document.getElementById("envatoBtnText"),
     apiModalOverlay: document.getElementById("apiModalOverlay"),
     btnApiModalClose: document.getElementById("btnApiModalClose"),
     btnVersion: document.getElementById("btnVersion"),
@@ -448,7 +460,22 @@ var CopyMonitor = (function () {
         try { return JSON.parse(raw); } catch (e) { return null; }
     }
 
+    function parseRobocopyPercent(logPath) {
+        if (!logPath) return -1;
+        var txt = readText(logPath);
+        if (!txt) return -1;
+        var re = /(\d+(?:\.\d+)?)\s*%/g;
+        var m, lastPct = -1;
+        while ((m = re.exec(txt)) !== null) {
+            var v = parseFloat(m[1]);
+            if (!isNaN(v) && v >= 0 && v <= 100) lastPct = v;
+        }
+        return lastPct;
+    }
+
     function tick() {
+        if (typeof FastCopy !== "undefined" && FastCopy.isBusy()) return;
+
         var st = readState();
         if (!st || st.state !== "copying" || !st.dest) {
             // File vừa copy xong -> cộng dồn vào tổng đã copy của phiên
@@ -460,9 +487,12 @@ var CopyMonitor = (function () {
             return;
         }
 
-        // Script PowerShell báo số byte chính xác theo thời gian thực; nếu không có thì tự đo file đích.
-        var bytes;
-        if (st.byScript && typeof st.copied === "number") {
+        // Ưu tiên đọc % thật từ log robocopy (vì NTFS pre-allocate kích thước file đích ngay từ 0ms)
+        var bytes = 0;
+        if (st.roboLog && st.total > 0) {
+            var pct = parseRobocopyPercent(st.roboLog);
+            if (pct >= 0) bytes = Math.round((st.total * pct) / 100);
+        } else if (st.byScript && typeof st.copied === "number") {
             bytes = st.copied;
         } else {
             bytes = sizeOf(st.dest);
@@ -476,22 +506,27 @@ var CopyMonitor = (function () {
             last.time = now;
             last.speed = 0;
             last.fileTotal = st.total || 0;
-        } else if (now - last.time >= 250) {
+        } else if (now - last.time >= 200) {
             var inst = (bytes - last.bytes) / ((now - last.time) / 1000);
             if (inst < 0) inst = 0;
-            last.speed = last.speed ? (last.speed * 0.5 + inst * 0.5) : inst;
-            last.bytes = bytes;
-            last.time = now;
+            if (bytes > last.bytes) {
+                last.speed = last.speed ? (last.speed * 0.5 + inst * 0.5) : inst;
+                last.bytes = bytes;
+                last.time = now;
+            } else if (now - last.time >= 1500) {
+                last.speed = last.speed * 0.7;
+                last.time = now;
+            }
         }
 
-        showCopyProgress(st.name, bytes, st.total, last.speed);
+        showCopyProgress(st.name, last.bytes, st.total, last.speed);
     }
 
     function start() {
         if (timer) return;
         if (!hasFsAccess() || !progressPath) return;
         reset();
-        timer = setInterval(tick, 250);
+        timer = setInterval(tick, 200);
     }
 
     function stop() {
@@ -513,6 +548,1457 @@ var CopyMonitor = (function () {
     return { setProgressPath: setProgressPath, start: start, stop: stop,
              diagnose: diagnose, engineName: engineName, getProgressPath: getProgressPath };
 })();
+
+/**
+ * FastCopy: Copy file tốc độ cao bằng Node.js + robocopy.exe chạy ngầm (windowsHide: true).
+ * - Không qua PowerShell (tiết kiệm 1.5–2s khởi động mỗi file).
+ * - Không dùng /J unbuffered I/O (tận dụng tối đa Windows System Cache giống hệt Explorer).
+ * - Không khoá luồng ExtendScript của Premiere Pro trong lúc copy.
+ * - Đọc trực tiếp phần trăm tiến độ thật từ stdout của robocopy để hiển thị đúng % và MB/s.
+ */
+var FastCopy = (function () {
+    var nodeFs = null, nodePath = null, nodeCp = null;
+    try {
+        var req = (typeof require === "function") ? require :
+                  (window.cep_node && window.cep_node.require ? window.cep_node.require : null);
+        if (req) {
+            nodeFs = req("fs");
+            nodePath = req("path");
+            nodeCp = req("child_process");
+        }
+    } catch (e) {}
+
+    var activeProc = null;
+    var activeDestPath = "";
+    var cancelled = false;
+
+    function isAvailable() {
+        return !!(nodeFs && nodePath && nodeCp && typeof nodeCp.spawn === "function");
+    }
+
+    function isBusy() {
+        return !!activeProc;
+    }
+
+    function cleanRoboDir(d) {
+        var s = String(d).replace(/\//g, "\\").replace(/\\+$/, "");
+        if (/^[A-Za-z]:$/.test(s)) return s + "\\.";
+        return s;
+    }
+
+    function statSize(p) {
+        try {
+            var st = nodeFs.statSync(p);
+            return (st && typeof st.size === "number") ? st.size : -1;
+        } catch (e) { return -1; }
+    }
+
+    function cancel() {
+        cancelled = true;
+        if (activeProc) {
+            var pid = activeProc.pid;
+            try { activeProc.kill(); } catch (e1) {}
+            if (pid && nodeCp) {
+                try { nodeCp.spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }); } catch (e2) {}
+            }
+            activeProc = null;
+        }
+        if (activeDestPath && nodeFs) {
+            try { if (nodeFs.existsSync(activeDestPath)) nodeFs.unlinkSync(activeDestPath); } catch (e3) {}
+            activeDestPath = "";
+        }
+        hideCopyProgress();
+    }
+
+    function copyFile(srcPath, destPath, knownSize, cb) {
+        if (!isAvailable()) {
+            cb({ ok: false, error: "Node.js không khả dụng" });
+            return;
+        }
+        cancelled = false;
+        var srcWin = String(srcPath).replace(/\//g, "\\");
+        var dstWin = String(destPath).replace(/\//g, "\\");
+
+        var total = (typeof knownSize === "number" && knownSize > 0) ? knownSize : statSize(srcWin);
+        if (total < 0) {
+            cb({ ok: false, error: "Không tìm thấy file nguồn: " + srcWin });
+            return;
+        }
+
+        // Nếu file đích đã tồn tại và đúng dung lượng thì bỏ qua ngay lập tức
+        var existingSize = statSize(dstWin);
+        if (existingSize >= 0 && (total === 0 || existingSize === total)) {
+            cb({ ok: true, copied: false, skipped: true, bytes: total });
+            return;
+        }
+
+        var srcDir = nodePath.dirname(srcWin);
+        var srcName = nodePath.basename(srcWin);
+        var dstDir = nodePath.dirname(dstWin);
+        var dstName = nodePath.basename(dstWin);
+
+        try {
+            if (!nodeFs.existsSync(dstDir)) nodeFs.mkdirSync(dstDir, { recursive: true });
+        } catch (eMk) {}
+
+        var startTime = Date.now();
+        var lastTime = startTime;
+        var lastBytes = 0;
+        var lastSpeed = 0;
+        activeDestPath = dstWin;
+        showCopyProgress(dstName, 0, total, 0);
+
+        function fallbackNodeCopy(reason) {
+            if (cancelled) {
+                cb({ ok: false, cancelled: true, error: "Đã huỷ" });
+                return;
+            }
+            try {
+                nodeFs.copyFile(srcWin, dstWin, function (err) {
+                    activeDestPath = "";
+                    if (cancelled) {
+                        try { if (nodeFs.existsSync(dstWin)) nodeFs.unlinkSync(dstWin); } catch (eU) {}
+                        hideCopyProgress();
+                        cb({ ok: false, cancelled: true, error: "Đã huỷ" });
+                        return;
+                    }
+                    if (err) {
+                        hideCopyProgress();
+                        cb({ ok: false, error: (reason ? reason + " | " : "") + err.message });
+                        return;
+                    }
+                    var finalSz = statSize(dstWin);
+                    if (total > 0 && finalSz !== total) {
+                        hideCopyProgress();
+                        cb({ ok: false, error: "File copy không đủ dung lượng (" + finalSz + "/" + total + ")" });
+                        return;
+                    }
+                    var elapsedSec = Math.max(0.05, (Date.now() - startTime) / 1000);
+                    showCopyProgress(dstName, total, total, total / elapsedSec);
+                    state.copiedBytes += total;
+                    setTimeout(hideCopyProgress, 60);
+                    cb({ ok: true, copied: true, bytes: total });
+                });
+            } catch (eCp) {
+                activeDestPath = "";
+                hideCopyProgress();
+                cb({ ok: false, error: eCp.message || String(eCp) });
+            }
+        }
+
+        // Nếu file nhỏ (< 1 MB) hoặc đổi tên file đích thì dùng luôn fs.copyFile của Node.js (libuv native CopyFileExW)
+        if (total < 1048576 || srcName.toLowerCase() !== dstName.toLowerCase()) {
+            fallbackNodeCopy("");
+            return;
+        }
+
+        var args = [
+            cleanRoboDir(srcDir),
+            cleanRoboDir(dstDir),
+            srcName,
+            "/NJH", "/NJS", "/NDL", "/NC", "/NS", "/R:1", "/W:1"
+        ];
+
+        var proc;
+        try {
+            proc = nodeCp.spawn("robocopy.exe", args, { windowsHide: true });
+        } catch (eSp) {
+            fallbackNodeCopy("spawn robocopy lỗi: " + eSp.message);
+            return;
+        }
+        activeProc = proc;
+
+        if (proc.stdout) {
+            proc.stdout.on("data", function (chunk) {
+                if (cancelled) return;
+                var s = chunk.toString();
+                var re = /(\d+(?:\.\d+)?)\s*%/g;
+                var m, maxPct = -1;
+                while ((m = re.exec(s)) !== null) {
+                    var v = parseFloat(m[1]);
+                    if (!isNaN(v) && v >= 0 && v <= 100) maxPct = v;
+                }
+                if (maxPct >= 0 && total > 0) {
+                    var curBytes = Math.round((total * maxPct) / 100);
+                    var now = Date.now();
+                    var dt = (now - lastTime) / 1000;
+                    if (dt >= 0.12 && curBytes > lastBytes) {
+                        var inst = (curBytes - lastBytes) / dt;
+                        lastSpeed = lastSpeed ? (lastSpeed * 0.45 + inst * 0.55) : inst;
+                        lastBytes = curBytes;
+                        lastTime = now;
+                    } else if (lastSpeed === 0 && now > startTime) {
+                        lastSpeed = curBytes / ((now - startTime) / 1000);
+                    }
+                    showCopyProgress(dstName, curBytes, total, lastSpeed);
+                }
+            });
+        }
+
+        var finished = false;
+        function onDone(code, errObj) {
+            if (finished) return;
+            finished = true;
+            activeProc = null;
+            if (cancelled) {
+                try { if (nodeFs.existsSync(dstWin)) nodeFs.unlinkSync(dstWin); } catch (eU) {}
+                activeDestPath = "";
+                hideCopyProgress();
+                cb({ ok: false, cancelled: true, error: "Đã huỷ" });
+                return;
+            }
+            var dstSz = statSize(dstWin);
+            var ok = (!errObj && typeof code === "number" && code < 8 && dstSz >= 0 && (total === 0 || dstSz === total));
+            if (ok) {
+                activeDestPath = "";
+                var elapsed = Math.max(0.05, (Date.now() - startTime) / 1000);
+                var spd = lastSpeed > 0 ? lastSpeed : (total / elapsed);
+                showCopyProgress(dstName, total, total, spd);
+                state.copiedBytes += total;
+                setTimeout(hideCopyProgress, 60);
+                cb({ ok: true, copied: true, bytes: total });
+            } else {
+                fallbackNodeCopy("robocopy exit=" + code);
+            }
+        }
+
+        proc.on("error", function (err) { onDone(-1, err); });
+        proc.on("close", function (code) { onDone(code, null); });
+    }
+
+    function copyBatch(items, onStep, cb) {
+        var idx = 0, copiedCount = 0, errors = [];
+        function next() {
+            if (cancelled || state.shouldCancel) {
+                cb({ ok: false, cancelled: true, copiedCount: copiedCount, errors: errors });
+                return;
+            }
+            if (idx >= items.length) {
+                cb({ ok: true, copiedCount: copiedCount, errors: errors });
+                return;
+            }
+            var item = items[idx];
+            if (onStep) onStep(item, idx, items.length);
+            copyFile(item.srcPath, item.destPath, item.sizeBytes || 0, function (res) {
+                if (res.cancelled) {
+                    cb({ ok: false, cancelled: true, copiedCount: copiedCount, errors: errors });
+                    return;
+                }
+                if (!res.ok) {
+                    errors.push((item.name || item.srcPath) + ": " + res.error);
+                } else if (res.copied) {
+                    copiedCount++;
+                }
+                idx++;
+                next();
+            });
+        }
+        next();
+    }
+
+    return {
+        isAvailable: isAvailable,
+        isBusy: isBusy,
+        copyFile: copyFile,
+        copyBatch: copyBatch,
+        cancel: cancel
+    };
+})();
+
+/**
+ * EnvatoDownloader: Tải video stock từ Envato (app.envato.com & elements.envato.com)
+ * bằng trình duyệt Chrome/Edge thật với profile cố định + Chrome DevTools Protocol (CDP).
+ *
+ * Cơ chế an toàn chống khoá tài khoản cá nhân:
+ *   1. Dùng trình duyệt Chrome/Edge thật (fingerprint TLS/JA3 chuẩn, lưu cookie đăng nhập cố định).
+ *   2. Bắt buộc kiểm tra đã đăng nhập tài khoản Envato trước khi cho phép tải.
+ *   3. Ưu tiên chọn định dạng chất lượng cao nhất (4K / Original).
+ *   4. Tải tuần tự từng file (1-by-1) kèm độ trễ ngẫu nhiên 3.5–6.5 giây giữa các lần tải.
+ *   5. Lưu cache thông minh tại Footage/envato_<id>.<ext> + .envato_cache.json để không bao giờ tải trùng.
+ *   6. Circuit breaker: tự động dừng ngay nếu phát hiện mất phiên đăng nhập hoặc giới hạn từ Envato.
+ */
+var EnvatoDownloader = (function () {
+    var nodeFs = null, nodePath = null, nodeCp = null, nodeHttp = null, nodeCrypto = null;
+    try {
+        var req = (typeof require === "function") ? require :
+                  (window.cep_node && window.cep_node.require ? window.cep_node.require : null);
+        if (req) {
+            nodeFs = req("fs");
+            nodePath = req("path");
+            nodeCp = req("child_process");
+            nodeHttp = req("http");
+            nodeCrypto = req("crypto");
+        }
+    } catch (e) {}
+
+    var DEBUG_PORT = 9295;
+    var LS_ENVATO_AUTH = "autoimportcut_v2_envato_auth";
+    var LS_ENVATO_USER = "autoimportcut_v2_envato_user";
+    var loggedInState = false;
+    var loggedInUser = "";
+    var lastDownloadFinishedAt = 0;
+    var cancelled = false;
+    var loginPollTimer = null;
+    var activeTimer = null;
+    var activeCdp = null;
+    var browserMode = ""; // "headless" | "visible"
+
+    try {
+        loggedInState = (localStorage.getItem(LS_ENVATO_AUTH) === "1");
+        loggedInUser = localStorage.getItem(LS_ENVATO_USER) || "";
+    } catch (eLs) {}
+
+    function isAvailable() {
+        return !!(nodeFs && nodePath && nodeCp && nodeHttp && nodeCrypto && findBrowserExe());
+    }
+
+    function findBrowserExe() {
+        if (!nodeFs) return "";
+        var localAppData = (typeof process !== "undefined" && process.env && process.env.LOCALAPPDATA) ? process.env.LOCALAPPDATA : "";
+        var candidates = [
+            "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+            "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+            localAppData ? (localAppData + "\\Google\\Chrome\\Application\\chrome.exe") : "",
+            "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+            "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"
+        ];
+        for (var i = 0; i < candidates.length; i++) {
+            if (candidates[i] && nodeFs.existsSync(candidates[i])) return candidates[i];
+        }
+        return "";
+    }
+
+    function getProfileDir() {
+        var base = (typeof process !== "undefined" && process.env)
+            ? (process.env.LOCALAPPDATA || process.env.APPDATA || "C:\\Temp")
+            : "C:\\Temp";
+        var dir = nodePath.join(base, "AutoImportCutV2", "EnvatoBrowserProfile");
+        try {
+            if (!nodeFs.existsSync(dir)) nodeFs.mkdirSync(dir, { recursive: true });
+        } catch (e) {}
+        return dir;
+    }
+
+    function setLoggedIn(status, userLabel) {
+        loggedInState = !!status;
+        loggedInUser = status ? (userLabel || loggedInUser || "Đã đăng nhập") : "";
+        try {
+            if (loggedInState) {
+                localStorage.setItem(LS_ENVATO_AUTH, "1");
+                localStorage.setItem(LS_ENVATO_USER, loggedInUser);
+            } else {
+                localStorage.removeItem(LS_ENVATO_AUTH);
+                localStorage.removeItem(LS_ENVATO_USER);
+            }
+        } catch (e) {}
+        updateEnvatoAuthUI();
+    }
+
+    function getEnvatoItemKey(url) {
+        if (!url) return "item";
+        var clean = String(url).trim().split("?")[0].split("#")[0].replace(/\/+$/, "");
+        var mUuid = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(clean);
+        if (mUuid) return mUuid[1].toLowerCase();
+        var mCode = /-([A-Z0-9]{6,12})$/i.exec(clean);
+        if (mCode) return mCode[1].toUpperCase();
+        var lastSeg = clean.substring(clean.lastIndexOf("/") + 1).replace(/[^A-Za-z0-9_-]/g, "_");
+        return lastSeg || "item";
+    }
+
+    function readCacheMap(footageDir) {
+        if (!nodeFs || !footageDir) return {};
+        try {
+            var p = nodePath.join(footageDir, ".envato_cache.json");
+            if (nodeFs.existsSync(p)) {
+                return JSON.parse(nodeFs.readFileSync(p, "utf8")) || {};
+            }
+        } catch (e) {}
+        return {};
+    }
+
+    function saveCacheMap(footageDir, mapUpdater) {
+        if (!nodeFs || !footageDir) return;
+        try {
+            var map = readCacheMap(footageDir);
+            mapUpdater(map);
+            var p = nodePath.join(footageDir, ".envato_cache.json");
+            nodeFs.writeFileSync(p, JSON.stringify(map, null, 2), "utf8");
+        } catch (e) {}
+    }
+
+    function statFileSize(p) {
+        try {
+            var st = nodeFs.statSync(p);
+            return (st && st.isFile() && st.size > 0) ? st.size : -1;
+        } catch (e) { return -1; }
+    }
+
+    function findLocalCachedFile(footageDir, urlOrKey) {
+        if (!nodeFs || !footageDir || !urlOrKey) return "";
+        var key = getEnvatoItemKey(urlOrKey);
+        if (state.envatoFiles && (state.envatoFiles[urlOrKey] || state.envatoFiles[key])) {
+            var memPath = state.envatoFiles[urlOrKey] || state.envatoFiles[key];
+            if (statFileSize(memPath) > 0) return memPath;
+        }
+        var cacheMap = readCacheMap(footageDir);
+        var rel = cacheMap[urlOrKey] || cacheMap[key] || cacheMap[key.toLowerCase()];
+        if (rel) {
+            var mappedFull = nodePath.join(footageDir, rel);
+            if (statFileSize(mappedFull) > 0) return mappedFull;
+        }
+        var exts = ["mp4", "mov", "m4v", "webm", "mkv"];
+        for (var i = 0; i < exts.length; i++) {
+            var cand = nodePath.join(footageDir, "envato_" + key + "." + exts[i]);
+            if (statFileSize(cand) > 0) return cand;
+        }
+        return "";
+    }
+
+    function httpGetJson(url, timeoutMs, cb) {
+        var done = false;
+        function finish(err, data) {
+            if (done) return;
+            done = true;
+            cb(err, data);
+        }
+        try {
+            var req = nodeHttp.get(url, function (res) {
+                var body = "";
+                res.on("data", function (chunk) { body += chunk; });
+                res.on("end", function () {
+                    try { finish(null, JSON.parse(body)); }
+                    catch (eP) { finish(eP, null); }
+                });
+            });
+            req.on("error", function (err) { finish(err, null); });
+            req.setTimeout(timeoutMs || 2000, function () {
+                try { req.destroy(); } catch (eD) {}
+                finish(new Error("Timeout"), null);
+            });
+        } catch (e) {
+            finish(e, null);
+        }
+    }
+
+    function findEnvatoTarget(targets) {
+        if (!Array.isArray(targets)) return null;
+        var pageTargets = targets.filter(function (t) {
+            if (!t || t.type !== "page" || !t.webSocketDebuggerUrl) return false;
+            var u = String(t.url || "").toLowerCase();
+            if (u.indexOf("chrome://") === 0 || u.indexOf("edge://") === 0 || u.indexOf("devtools://") === 0 || u.indexOf("chrome-extension://") === 0) {
+                return false;
+            }
+            return true;
+        });
+        for (var i = 0; i < pageTargets.length; i++) {
+            if ((pageTargets[i].url || "").indexOf("app.envato.com") !== -1) return pageTargets[i];
+        }
+        for (var j = 0; j < pageTargets.length; j++) {
+            if ((pageTargets[j].url || "").indexOf("envato.com") !== -1) return pageTargets[j];
+        }
+        return pageTargets[0] || null;
+    }
+
+    function closeBrowserInstance(cb) {
+        httpGetJson("http://127.0.0.1:" + DEBUG_PORT + "/json", 800, function (err, targets) {
+            if (err || !Array.isArray(targets) || targets.length === 0) {
+                browserMode = "";
+                if (cb) cb();
+                return;
+            }
+            var tgt = findEnvatoTarget(targets) || targets[0];
+            if (!tgt || !tgt.webSocketDebuggerUrl) {
+                browserMode = "";
+                if (cb) cb();
+                return;
+            }
+            connectCdp(tgt.webSocketDebuggerUrl, function (cErr, cdp) {
+                if (!cErr && cdp) {
+                    cdp.send("Browser.close", {}, function () {
+                        cdp.close();
+                        browserMode = "";
+                        setTimeout(function () { if (cb) cb(); }, 700);
+                    });
+                } else {
+                    browserMode = "";
+                    if (cb) cb();
+                }
+            });
+        });
+    }
+
+    function ensureBrowserAndTarget(startUrl, allowSpawn, cb, needVisible) {
+        if (!isAvailable()) {
+            cb(new Error("Không tìm thấy Google Chrome hoặc Microsoft Edge trên máy"), null);
+            return;
+        }
+        var wantMode = needVisible ? "visible" : "headless";
+
+        function checkOrSpawn() {
+            httpGetJson("http://127.0.0.1:" + DEBUG_PORT + "/json", 1200, function (err, targets) {
+                if (!err && Array.isArray(targets)) {
+                    // Nếu đang cần mở cửa sổ hiện hình (để user đăng nhập) mà trình duyệt đang chạy ngầm headless (hoặc ngược lại), đóng để mở lại đúng chế độ
+                    if ((needVisible && browserMode !== "visible") || (!needVisible && browserMode === "visible")) {
+                        closeBrowserInstance(function () {
+                            spawnBrowser();
+                        });
+                        return;
+                    }
+                    if (!browserMode) browserMode = wantMode;
+                    var existing = findEnvatoTarget(targets);
+                    if (existing) { cb(null, existing); return; }
+                    httpGetJson("http://127.0.0.1:" + DEBUG_PORT + "/json/new?" + encodeURIComponent(startUrl || "https://app.envato.com/"), 2000, function (errNew, newTab) {
+                        if (!errNew && newTab && newTab.webSocketDebuggerUrl) cb(null, newTab);
+                        else cb(new Error("Không mở được tab mới trong trình duyệt Envato"), null);
+                    });
+                    return;
+                }
+                if (!allowSpawn) {
+                    cb(new Error("Trình duyệt Envato chưa mở"), null);
+                    return;
+                }
+                spawnBrowser();
+            });
+        }
+
+        function spawnBrowser() {
+            var exe = findBrowserExe();
+            var profileDir = getProfileDir();
+            var args = [
+                "--user-data-dir=" + profileDir,
+                "--remote-debugging-port=" + DEBUG_PORT,
+                "--remote-allow-origins=*",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--disable-blink-features=AutomationControlled"
+            ];
+            if (!needVisible) {
+                // Chạy ngầm 100% không hiện cửa sổ hay icon dưới thanh Taskbar
+                args.push("--headless=new");
+                args.push("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36");
+                args.push("--window-size=1440,900");
+                args.push("--mute-audio");
+                args.push(startUrl || "https://app.envato.com/");
+            } else {
+                // Chỉ mở cửa sổ gọn gàng khi người dùng bấm nút Đăng nhập Envato
+                args.push("--window-size=1100,760");
+                args.push("--app=" + (startUrl || "https://app.envato.com/"));
+            }
+            try {
+                var child = nodeCp.spawn(exe, args, { detached: true, stdio: "ignore", windowsHide: !needVisible });
+                if (child && child.unref) child.unref();
+                browserMode = wantMode;
+            } catch (eSpawn) {
+                cb(eSpawn, null);
+                return;
+            }
+
+            var attempts = 0;
+            function pollReady() {
+                attempts++;
+                httpGetJson("http://127.0.0.1:" + DEBUG_PORT + "/json", 1200, function (e2, tList) {
+                    if (!e2 && Array.isArray(tList)) {
+                        var tgt = findEnvatoTarget(tList);
+                        if (tgt) { cb(null, tgt); return; }
+                    }
+                    if (attempts >= 30) {
+                        cb(new Error("Quá thời gian chờ khởi động trình duyệt Chrome/Edge"), null);
+                        return;
+                    }
+                    setTimeout(pollReady, 450);
+                });
+            }
+            setTimeout(pollReady, 600);
+        }
+
+        checkOrSpawn();
+    }
+
+    /**
+     * Kết nối WebSocket thuần Node.js tới Chrome DevTools Protocol (không cần thư viện ngoài).
+     */
+    function connectCdp(wsUrl, cb) {
+        var m = /^ws:\/\/([^\/:]+):(\d+)(\/.*)$/i.exec(wsUrl);
+        if (!m) { cb(new Error("WebSocket URL không hợp lệ: " + wsUrl), null); return; }
+        var host = m[1], port = parseInt(m[2], 10), wsPath = m[3];
+        var key = nodeCrypto.randomBytes(16).toString("base64");
+        var connected = false;
+
+        var req = nodeHttp.request({
+            host: host,
+            port: port,
+            path: wsPath,
+            headers: {
+                "Connection": "Upgrade",
+                "Upgrade": "websocket",
+                "Sec-WebSocket-Key": key,
+                "Sec-WebSocket-Version": "13"
+            }
+        });
+
+        req.on("error", function (err) {
+            if (!connected) cb(err, null);
+        });
+
+        req.on("upgrade", function (res, socket, head) {
+            connected = true;
+            socket.setNoDelay(true);
+            var rxBuf = (head && head.length) ? Buffer.from(head) : Buffer.alloc(0);
+            var nextId = 1;
+            var pending = {};
+            var eventHandlers = {};
+            var closed = false;
+
+            function sendFrame(opcode, payloadBuf) {
+                if (closed) return;
+                var mask = nodeCrypto.randomBytes(4);
+                var len = payloadBuf.length;
+                var header;
+                if (len < 126) {
+                    header = Buffer.alloc(6);
+                    header[0] = 0x80 | opcode;
+                    header[1] = 0x80 | len;
+                    mask.copy(header, 2);
+                } else if (len < 65536) {
+                    header = Buffer.alloc(8);
+                    header[0] = 0x80 | opcode;
+                    header[1] = 0x80 | 126;
+                    header.writeUInt16BE(len, 2);
+                    mask.copy(header, 4);
+                } else {
+                    header = Buffer.alloc(14);
+                    header[0] = 0x80 | opcode;
+                    header[1] = 0x80 | 127;
+                    header.writeUInt32BE(0, 2);
+                    header.writeUInt32BE(len, 6);
+                    mask.copy(header, 10);
+                }
+                var masked = Buffer.alloc(len);
+                for (var i = 0; i < len; i++) {
+                    masked[i] = payloadBuf[i] ^ mask[i & 3];
+                }
+                try { socket.write(Buffer.concat([header, masked])); } catch (eW) {}
+            }
+
+            socket.on("data", function (chunk) {
+                rxBuf = Buffer.concat([rxBuf, chunk]);
+                while (rxBuf.length >= 2) {
+                    var b0 = rxBuf[0], b1 = rxBuf[1];
+                    var opcode = b0 & 0x0f;
+                    var isMasked = (b1 & 0x80) !== 0;
+                    var payloadLen = b1 & 0x7f;
+                    var offset = 2;
+                    if (payloadLen === 126) {
+                        if (rxBuf.length < 4) return;
+                        payloadLen = rxBuf.readUInt16BE(2);
+                        offset = 4;
+                    } else if (payloadLen === 127) {
+                        if (rxBuf.length < 10) return;
+                        payloadLen = rxBuf.readUInt32BE(2) * 4294967296 + rxBuf.readUInt32BE(6);
+                        offset = 10;
+                    }
+                    var maskOffset = offset;
+                    if (isMasked) offset += 4;
+                    if (rxBuf.length < offset + payloadLen) return;
+
+                    var dataBuf = rxBuf.slice(offset, offset + payloadLen);
+                    if (isMasked) {
+                        var mKey = rxBuf.slice(maskOffset, maskOffset + 4);
+                        for (var mi = 0; mi < dataBuf.length; mi++) dataBuf[mi] ^= mKey[mi & 3];
+                    }
+                    rxBuf = rxBuf.slice(offset + payloadLen);
+
+                    if (opcode === 0x08) {
+                        closed = true;
+                        try { socket.end(); } catch (eC) {}
+                        return;
+                    } else if (opcode === 0x09) {
+                        sendFrame(0x0a, dataBuf);
+                    } else if (opcode === 0x01) {
+                        var txt = dataBuf.toString("utf8");
+                        var msg = null;
+                        try { msg = JSON.parse(txt); } catch (eJ) {}
+                        if (msg) {
+                            if (msg.id && pending[msg.id]) {
+                                var pCb = pending[msg.id];
+                                delete pending[msg.id];
+                                pCb(msg.error || null, msg.result || {});
+                            } else if (msg.method && eventHandlers[msg.method]) {
+                                var list = eventHandlers[msg.method].slice();
+                                for (var hi = 0; hi < list.length; hi++) {
+                                    try { list[hi](msg.params || {}); } catch (eH) {}
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            socket.on("close", function () {
+                closed = true;
+                for (var k in pending) {
+                    if (pending.hasOwnProperty(k)) {
+                        var fn = pending[k];
+                        delete pending[k];
+                        try { fn(new Error("CDP socket closed"), null); } catch (e) {}
+                    }
+                }
+            });
+
+            var client = {
+                send: function (method, params, sCb) {
+                    if (closed) { if (sCb) sCb(new Error("CDP closed"), null); return; }
+                    var id = nextId++;
+                    if (sCb) pending[id] = sCb;
+                    var str = JSON.stringify({ id: id, method: method, params: params || {} });
+                    sendFrame(0x01, Buffer.from(str, "utf8"));
+                },
+                evalJs: function (expression, eCb) {
+                    client.send("Runtime.evaluate", {
+                        expression: expression,
+                        returnByValue: true,
+                        awaitPromise: true
+                    }, function (err, res) {
+                        if (err) { eCb(err, null); return; }
+                        var val = (res && res.result) ? res.result.value : undefined;
+                        eCb(null, val);
+                    });
+                },
+                on: function (eventName, handler) {
+                    if (!eventHandlers[eventName]) eventHandlers[eventName] = [];
+                    eventHandlers[eventName].push(handler);
+                },
+                close: function () {
+                    closed = true;
+                    try { socket.destroy(); } catch (e) {}
+                }
+            };
+            cb(null, client);
+        });
+
+        req.end();
+    }
+
+    /**
+     * Kiểm tra trạng thái đăng nhập trên trang Envato hiện tại qua CDP.
+     */
+    var CHECK_LOGIN_EXPR = "(function(){" +
+        "try {" +
+        "  var href = String(window.location.href || '');" +
+        "  var ld = window.__reactRouterContext && window.__reactRouterContext.state && window.__reactRouterContext.state.loaderData;" +
+        "  if (ld && ld.root) {" +
+        "    if (!ld.root.isGuest && ld.root.user) {" +
+        "      var u = ld.root.user;" +
+        "      return { ready: true, loggedIn: true, user: u.username || u.email || u.givenName || 'Đã đăng nhập', plan: ld.root.customerPlanName || '' };" +
+        "    }" +
+        "    if (ld.root.isGuest === true) {" +
+        "      return { ready: true, loggedIn: false };" +
+        "    }" +
+        "  }" +
+        "  if (href.indexOf('elements.envato.com') !== -1 && window.INITIAL_HYDRATION_DATA) {" +
+        "    var signInEl = document.querySelector('a[href*=\"/sign-in\"], [data-testid=\"header-sign-in\"]');" +
+        "    var acctEl = document.querySelector('a[href*=\"/account\"], [data-testid=\"user-menu\"], [data-testid=\"header-account\"]');" +
+        "    if (acctEl && !signInEl) return { ready: true, loggedIn: true, user: 'Envato Elements' };" +
+        "    if (signInEl) return { ready: true, loggedIn: false };" +
+        "  }" +
+        "  var signBtn = document.querySelector('[data-cy=\"sign-in\"]');" +
+        "  if (signBtn) return { ready: true, loggedIn: false };" +
+        "  return { ready: document.readyState === 'complete', loggedIn: false, unknown: true };" +
+        "} catch(e) { return { ready: false, loggedIn: false, err: e.toString() }; }" +
+    "})()";
+
+    function checkLoginStatus(opts, cb) {
+        opts = opts || {};
+        var allowSpawn = !!opts.openIfNeeded;
+        ensureBrowserAndTarget("https://app.envato.com/", allowSpawn, function (err, target) {
+            if (err || !target) {
+                if (cb) cb({ ok: false, loggedIn: loggedInState, user: loggedInUser, error: err ? err.message : "" });
+                return;
+            }
+            connectCdp(target.webSocketDebuggerUrl, function (cErr, cdp) {
+                if (cErr || !cdp) {
+                    if (cb) cb({ ok: false, loggedIn: loggedInState, user: loggedInUser });
+                    return;
+                }
+                var curUrl = String(target.url || "");
+                var needNav = (curUrl.indexOf("app.envato.com") === -1 && curUrl.indexOf("elements.envato.com") === -1);
+                function inspectPage(triesLeft) {
+                    cdp.evalJs(CHECK_LOGIN_EXPR, function (eEval, info) {
+                        if (info && info.ready && !info.unknown) {
+                            cdp.close();
+                            setLoggedIn(!!info.loggedIn, info.user || "");
+                            if (cb) cb({ ok: true, loggedIn: !!info.loggedIn, user: info.user || "" });
+                            return;
+                        }
+                        if (triesLeft <= 0) {
+                            cdp.close();
+                            if (cb) cb({ ok: true, loggedIn: loggedInState, user: loggedInUser });
+                            return;
+                        }
+                        setTimeout(function () { inspectPage(triesLeft - 1); }, 600);
+                    });
+                }
+                if (needNav) {
+                    cdp.send("Page.navigate", { url: "https://app.envato.com/" }, function () {
+                        setTimeout(function () { inspectPage(12); }, 1200);
+                    });
+                } else {
+                    inspectPage(8);
+                }
+            });
+        });
+    }
+
+    /**
+     * Mở cửa sổ trình duyệt Envato để người dùng đăng nhập và tự động theo dõi đến khi đăng nhập xong.
+     */
+    function openLoginWindow(onSuccessCb) {
+        if (loginPollTimer) { clearInterval(loginPollTimer); loginPollTimer = null; }
+        var wasAlreadyLoggedIn = loggedInState && !onSuccessCb;
+        addLog("info", "🔑 Đang mở cửa sổ đăng nhập Envato...");
+        ensureBrowserAndTarget("https://app.envato.com/", true, function (err, target) {
+            if (err || !target) {
+                showAlert("Không mở được trình duyệt", escapeHtml(err ? err.message : "Không thể khởi động Chrome/Edge"), "error");
+                return;
+            }
+            connectCdp(target.webSocketDebuggerUrl, function (cErr, cdp) {
+                if (!cErr && cdp) {
+                    cdp.send("Page.bringToFront", {}, function () {});
+                    var tUrl = String(target.url || "");
+                    if (tUrl.indexOf("envato.com") === -1) {
+                        cdp.send("Page.navigate", { url: "https://app.envato.com/" }, function () {});
+                    }
+                    // Nếu chưa đăng nhập, tự bấm nút Sign In trên trang để mở thẳng form đăng nhập cho tiện
+                    setTimeout(function () {
+                        cdp.evalJs("(function(){ var b = document.querySelector('[data-cy=\"sign-in\"]'); if (b) b.click(); })()", function () {
+                            cdp.close();
+                        });
+                    }, 1800);
+                }
+            });
+
+            var pollCount = 0;
+            loginPollTimer = setInterval(function () {
+                pollCount++;
+                if (pollCount > 150) { // tối đa 5 phút
+                    clearInterval(loginPollTimer);
+                    loginPollTimer = null;
+                    return;
+                }
+                httpGetJson("http://127.0.0.1:" + DEBUG_PORT + "/json", 1000, function (eList, tList) {
+                    if (eList || !Array.isArray(tList)) {
+                        // Người dùng đã đóng trình duyệt
+                        if (pollCount > 5) {
+                            clearInterval(loginPollTimer);
+                            loginPollTimer = null;
+                        }
+                        return;
+                    }
+                    var tgt = findEnvatoTarget(tList);
+                    if (!tgt) return;
+                    connectCdp(tgt.webSocketDebuggerUrl, function (eC, cdp2) {
+                        if (eC || !cdp2) return;
+                        cdp2.evalJs(CHECK_LOGIN_EXPR, function (eEv, info) {
+                            cdp2.close();
+                            if (info && info.loggedIn) {
+                                clearInterval(loginPollTimer);
+                                loginPollTimer = null;
+                                setLoggedIn(true, info.user || "Đã đăng nhập");
+                                addLog("success", "✅ Đã xác nhận đăng nhập tài khoản Envato (" + (info.user || "Active") + ") — các lượt tải sẽ chạy ngầm 100%!");
+                                showToast("Đã đăng nhập Envato!", "Tài khoản: " + (info.user || "Đã kết nối") + " (tải ngầm 100%)", false);
+                                if (state.mediaCheckItems && state.mediaCheckItems.length > 0) {
+                                    renderMediaCheck(state.mediaCheckItems);
+                                }
+                                if (!wasAlreadyLoggedIn) {
+                                    // Tự động đóng cửa sổ hiện hình ngay khi vừa đăng nhập xong để mọi lượt tải sau chạy ngầm (--headless=new)
+                                    closeBrowserInstance(function () {
+                                        if (onSuccessCb) {
+                                            var fn = onSuccessCb;
+                                            onSuccessCb = null;
+                                            fn(true);
+                                        }
+                                    });
+                                } else if (onSuccessCb) {
+                                    var fn2 = onSuccessCb;
+                                    onSuccessCb = null;
+                                    fn2(true);
+                                }
+                            } else if (info && info.ready && !info.unknown && !info.loggedIn) {
+                                wasAlreadyLoggedIn = false;
+                                setLoggedIn(false, "");
+                            }
+                        });
+                    });
+                });
+            }, 2000);
+        }, true);
+    }
+
+    function cancel() {
+        cancelled = true;
+        if (activeTimer) { clearTimeout(activeTimer); activeTimer = null; }
+        if (activeCdp) {
+            try { activeCdp.close(); } catch (e) {}
+            activeCdp = null;
+        }
+        hideCopyProgress();
+    }
+
+    function extractVideoFromZipIfNeeded(zipPath, targetFileNoExt) {
+        if (!nodeFs || !nodeCp) return "";
+        var extractDir = zipPath + "_unzip";
+        try {
+            if (!nodeFs.existsSync(extractDir)) nodeFs.mkdirSync(extractDir, { recursive: true });
+            nodeCp.execFileSync("tar.exe", ["-xf", zipPath, "-C", extractDir], { windowsHide: true, timeout: 120000 });
+            var bestFile = "", bestSize = 0;
+            function scanDir(d) {
+                var entries = nodeFs.readdirSync(d);
+                for (var i = 0; i < entries.length; i++) {
+                    var full = nodePath.join(d, entries[i]);
+                    var st = nodeFs.statSync(full);
+                    if (st.isDirectory()) scanDir(full);
+                    else if (/\.(mp4|mov|m4v|mkv|webm)$/i.test(entries[i]) && st.size > bestSize) {
+                        bestSize = st.size;
+                        bestFile = full;
+                    }
+                }
+            }
+            scanDir(extractDir);
+            if (bestFile) {
+                var ext = nodePath.extname(bestFile).toLowerCase() || ".mp4";
+                var finalPath = targetFileNoExt + ext;
+                nodeFs.renameSync(bestFile, finalPath);
+                try { nodeFs.unlinkSync(zipPath); } catch (eU) {}
+                return finalPath;
+            }
+        } catch (eZ) {}
+        return "";
+    }
+
+    /**
+     * Tải 1 video Envato với chất lượng cao nhất (4K / Original) về footageDir.
+     */
+    function downloadSingleItem(item, footageDir, onStatus, cb) {
+        var url = item.url;
+        var itemKey = item.key || getEnvatoItemKey(url);
+
+        // 1. Kiểm tra lại cache cục bộ trước khi tải
+        var existingLocal = findLocalCachedFile(footageDir, url);
+        if (existingLocal) {
+            state.envatoFiles[url] = existingLocal;
+            state.envatoFiles[itemKey] = existingLocal;
+            cb({ ok: true, cached: true, filePath: existingLocal });
+            return;
+        }
+
+        // 2. Độ trễ ngẫu nhiên (3.5s – 6.5s) giữa 2 lần tải liên tiếp để bảo vệ tài khoản cá nhân
+        var now = Date.now();
+        var minGapMs = 3500 + Math.floor(Math.random() * 3000);
+        var elapsedSinceLast = lastDownloadFinishedAt > 0 ? (now - lastDownloadFinishedAt) : 999999;
+        var waitMs = Math.max(0, minGapMs - elapsedSinceLast);
+
+        function proceedAfterJitter() {
+            if (cancelled || state.shouldCancel) {
+                cb({ ok: false, cancelled: true, error: "Đã huỷ" });
+                return;
+            }
+            if (onStatus) onStatus("Đang kết nối trình duyệt Envato cho mã " + itemKey + "...");
+            ensureBrowserAndTarget("https://app.envato.com/", true, function (bErr, target) {
+                if (bErr || !target) {
+                    cb({ ok: false, error: bErr ? bErr.message : "Không mở được trình duyệt Envato" });
+                    return;
+                }
+                connectCdp(target.webSocketDebuggerUrl, function (cErr, cdp) {
+                    if (cErr || !cdp) {
+                        cb({ ok: false, error: "Không kết nối được CDP: " + (cErr ? cErr.message : "") });
+                        return;
+                    }
+                    activeCdp = cdp;
+                    var resolvedUuid = "";
+                    var resolvedType = "stock-video";
+
+                    function finishSingle(resObj) {
+                        if (activeCdp === cdp) activeCdp = null;
+                        try { cdp.close(); } catch (eC) {}
+                        hideCopyProgress();
+                        cb(resObj);
+                    }
+
+                    // Bước A: Nếu link là elements.envato.com -> lấy itemUuid chuẩn (hỗ trợ cả trường hợp Envato tự 302 redirect sang app.envato.com khi đã login)
+                    function resolveAppUrl(rCb) {
+                        if (url.toLowerCase().indexOf("elements.envato.com") === -1) {
+                            var mU = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(url);
+                            if (mU) resolvedUuid = mU[1].toLowerCase();
+                            rCb("https://app.envato.com/stock-video/" + (resolvedUuid || itemKey), false);
+                            return;
+                        }
+                        if (onStatus) onStatus("Đang truy xuất mã gốc Envato (" + itemKey + ")...");
+                        // Đánh dấu trang hiện tại trước khi điều hướng để không đọc nhầm DOM của video dòng trước
+                        cdp.evalJs("(function(){ try { window.__aicLeavingPage = true; } catch(e){} })()", function () {
+                            cdp.send("Page.navigate", { url: url }, function () {
+                                var tries = 0;
+                                function pollElementsOrRedirect() {
+                                    if (cancelled || state.shouldCancel) { finishSingle({ ok: false, cancelled: true }); return; }
+                                    tries++;
+                                    cdp.evalJs("(function(){" +
+                                        "try {" +
+                                        "  if (window.__aicLeavingPage === true) return { ok: false, leaving: true };" +
+                                        "  var href = String(window.location.href || '');" +
+                                        "  var host = String(window.location.hostname || '').toLowerCase();" +
+                                        "  if (host.indexOf('app.envato.com') !== -1) {" +
+                                        "    var mUrl = href.match(/\\/([a-z0-9-]+)\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);" +
+                                        "    var ld = window.__reactRouterContext && window.__reactRouterContext.state && window.__reactRouterContext.state.loaderData;" +
+                                        "    var uuidFromLd = '', typeFromLd = '';" +
+                                        "    if (ld) {" +
+                                        "      for (var k in ld) {" +
+                                        "        var it = ld[k] && (ld[k].item || (ld[k].itemDetailsProps && ld[k].itemDetailsProps.item));" +
+                                        "        if (it && it.itemUuid) { uuidFromLd = it.itemUuid; typeFromLd = it.itemType || ''; break; }" +
+                                        "      }" +
+                                        "    }" +
+                                        "    var finalUuid = uuidFromLd || (mUrl ? mUrl[2] : '');" +
+                                        "    var finalType = typeFromLd || (mUrl ? mUrl[1] : 'stock-video');" +
+                                        "    if (finalUuid) return { ok: true, uuid: finalUuid, type: finalType, alreadyOnApp: true, appUrl: href };" +
+                                        "  }" +
+                                        "  if (window.INITIAL_HYDRATION_DATA) {" +
+                                        "    var raw = atob(window.INITIAL_HYDRATION_DATA);" +
+                                        "    var mId = raw.match(/\"itemUuid\":\"([0-9a-f-]{36})\"/i);" +
+                                        "    var mTp = raw.match(/\"itemType\":\"([^\"]+)\"/i);" +
+                                        "    if (mId) return { ok: true, uuid: mId[1], type: mTp ? mTp[1] : 'stock-video', alreadyOnApp: false };" +
+                                        "  }" +
+                                        "  return { ok: false, href: href, title: document.title };" +
+                                        "} catch(e) { return { ok: false, err: e.toString() }; }" +
+                                    "})()", function (eH, hInfo) {
+                                        if (hInfo && hInfo.ok && hInfo.uuid) {
+                                            resolvedUuid = hInfo.uuid.toLowerCase();
+                                            resolvedType = hInfo.type || "stock-video";
+                                            // Kiểm tra xem file theo UUID này đã có sẵn trong Footage/ chưa!
+                                            var cachedByUuid = findLocalCachedFile(footageDir, resolvedUuid);
+                                            if (cachedByUuid) {
+                                                saveCacheMap(footageDir, function (m) {
+                                                    var baseName = nodePath.basename(cachedByUuid);
+                                                    m[url] = baseName;
+                                                    m[itemKey] = baseName;
+                                                    m[resolvedUuid] = baseName;
+                                                });
+                                                state.envatoFiles[url] = cachedByUuid;
+                                                state.envatoFiles[itemKey] = cachedByUuid;
+                                                finishSingle({ ok: true, cached: true, filePath: cachedByUuid });
+                                                return;
+                                            }
+                                            rCb("https://app.envato.com/" + resolvedType + "/" + resolvedUuid, !!hInfo.alreadyOnApp);
+                                            return;
+                                        }
+                                        if (tries >= 40) {
+                                            finishSingle({ ok: false, error: "Không lấy được thông tin video từ trang Envato (" + itemKey + ")" });
+                                            return;
+                                        }
+                                        activeTimer = setTimeout(pollElementsOrRedirect, 600);
+                                    });
+                                }
+                                activeTimer = setTimeout(pollElementsOrRedirect, 700);
+                            });
+                        });
+                    }
+
+                    // Bước B: Mở trang item trên app.envato.com, chọn chất lượng cao nhất (4K/Original) và bấm tải
+                    resolveAppUrl(function (appItemUrl, alreadyOnAppPage) {
+                        if (cancelled || state.shouldCancel) { finishSingle({ ok: false, cancelled: true }); return; }
+                        if (onStatus) onStatus("Đang chuẩn bị tải chất lượng cao nhất (" + itemKey + ")...");
+
+                        var tempDlDir = nodePath.join(footageDir, "_envato_dl_tmp");
+                        try {
+                            if (!nodeFs.existsSync(footageDir)) nodeFs.mkdirSync(footageDir, { recursive: true });
+                            if (!nodeFs.existsSync(tempDlDir)) nodeFs.mkdirSync(tempDlDir, { recursive: true });
+                            // Dọn các file tạm cũ trong _envato_dl_tmp trước khi tải file mới
+                            var oldTmp = nodeFs.readdirSync(tempDlDir);
+                            for (var oi = 0; oi < oldTmp.length; oi++) {
+                                try { nodeFs.unlinkSync(nodePath.join(tempDlDir, oldTmp[oi])); } catch (eRm) {}
+                            }
+                        } catch (eDir) {}
+
+                        var dlWinPath = String(tempDlDir).replace(/\//g, "\\");
+                        cdp.send("Browser.setDownloadBehavior", {
+                            behavior: "allow",
+                            downloadPath: dlWinPath,
+                            eventsEnabled: true
+                        }, function () {});
+                        cdp.send("Page.setDownloadBehavior", {
+                            behavior: "allow",
+                            downloadPath: dlWinPath
+                        }, function () {});
+
+                        var dlStarted = false;
+                        var dlCompleted = false;
+                        var dlStartTime = Date.now();
+                        var lastBytes = 0, lastSpeedTime = Date.now(), lastSpeed = 0;
+                        var totalExpectedBytes = 0;
+                        var chosenFormatLabel = "Chất lượng cao nhất";
+
+                        function onProgressUpdate(rxBytes, totBytes) {
+                            if (cancelled || state.shouldCancel) return;
+                            var nowT = Date.now();
+                            var dt = (nowT - lastSpeedTime) / 1000;
+                            if (dt >= 0.2 && rxBytes > lastBytes) {
+                                var inst = (rxBytes - lastBytes) / dt;
+                                lastSpeed = lastSpeed ? (lastSpeed * 0.5 + inst * 0.5) : inst;
+                                lastBytes = rxBytes;
+                                lastSpeedTime = nowT;
+                            }
+                            showCopyProgress("Envato [" + itemKey.substring(0, 8) + "] " + chosenFormatLabel, rxBytes, totBytes || totalExpectedBytes, lastSpeed);
+                        }
+
+                        cdp.on("Browser.downloadWillBegin", function (params) {
+                            dlStarted = true;
+                            dlStartTime = Date.now();
+                        });
+                        cdp.on("Page.downloadWillBegin", function (params) {
+                            dlStarted = true;
+                            dlStartTime = Date.now();
+                        });
+                        cdp.on("Browser.downloadProgress", function (params) {
+                            dlStarted = true;
+                            if (params.totalBytes > 0) totalExpectedBytes = params.totalBytes;
+                            onProgressUpdate(params.receivedBytes || 0, params.totalBytes || totalExpectedBytes);
+                            if (params.state === "completed") {
+                                dlCompleted = true;
+                            }
+                        });
+                        cdp.on("Page.downloadProgress", function (params) {
+                            dlStarted = true;
+                            if (params.totalBytes > 0) totalExpectedBytes = params.totalBytes;
+                            onProgressUpdate(params.receivedBytes || 0, params.totalBytes || totalExpectedBytes);
+                            if (params.state === "completed") {
+                                dlCompleted = true;
+                            }
+                        });
+
+                        var waitTries = 0;
+                        function pollItemPageReady() {
+                            if (cancelled || state.shouldCancel) { finishSingle({ ok: false, cancelled: true }); return; }
+                            waitTries++;
+                            var expectedUuidJs = JSON.stringify(resolvedUuid || "");
+                            cdp.evalJs("(function(){" +
+                                "try {" +
+                                "  if (window.__aicLeavingPage === true) return { ready: false, leaving: true };" +
+                                "  var expUuid = " + expectedUuidJs + ";" +
+                                "  var ld = window.__reactRouterContext && window.__reactRouterContext.state && window.__reactRouterContext.state.loaderData;" +
+                                "  var signBtn = document.querySelector('[data-cy=\"sign-in\"]');" +
+                                "  var dlBtn = document.querySelector('[data-cy=\"idp-download-button\"]');" +
+                                "  if (ld && ld.root && ld.root.isGuest === true) return { ready: true, needLogin: true };" +
+                                "  if (signBtn && !dlBtn) return { ready: true, needLogin: true };" +
+                                "  if (!dlBtn) return { ready: false };" +
+                                "  var btnItemId = (dlBtn.getAttribute('data-analytics-item_id') || '').toLowerCase();" +
+                                "  if (expUuid && btnItemId && btnItemId !== expUuid) return { ready: false, mismatch: true };" +
+                                "  if (ld && ld.root && ld.root.userPreferences && ld.root.userPreferences.licensePreference) {" +
+                                "    ld.root.userPreferences.licensePreference.mode = 'never_ask';" +
+                                "  }" +
+                                "  var formats = [];" +
+                                "  if (ld) {" +
+                                "    for (var k in ld) {" +
+                                "      var it = ld[k] && (ld[k].item || (ld[k].itemDetailsProps && ld[k].itemDetailsProps.item));" +
+                                "      if (it && Array.isArray(it.downloadFormats)) { formats = it.downloadFormats; break; }" +
+                                "    }" +
+                                "  }" +
+                                "  var bestFmt = formats[0] || null;" +
+                                "  function rankFmt(f) {" +
+                                "    var lbl = String((f && (f.label || f.shortLabel)) || '').toUpperCase();" +
+                                "    if (lbl.indexOf('4K') !== -1 || lbl.indexOf('2160') !== -1) return 4000;" +
+                                "    if (lbl.indexOf('2K') !== -1 || lbl.indexOf('1440') !== -1) return 2000;" +
+                                "    if (lbl.indexOf('1080') !== -1) return 1080;" +
+                                "    if (lbl.indexOf('720') !== -1) return 720;" +
+                                "    return 500;" +
+                                "  }" +
+                                "  for (var fi = 1; fi < formats.length; fi++) {" +
+                                "    if (rankFmt(formats[fi]) > rankFmt(bestFmt)) bestFmt = formats[fi];" +
+                                "  }" +
+                                "  var curAsset = dlBtn.getAttribute('data-analytics-asset_uuid') || '';" +
+                                "  var curLabel = dlBtn.getAttribute('data-analytics-format_label') || String(dlBtn.innerText || dlBtn.textContent || '').replace(/\\s+/g, ' ').trim();" +
+                                "  return {" +
+                                "    ready: true," +
+                                "    needLogin: false," +
+                                "    curAsset: curAsset," +
+                                "    bestAsset: bestFmt ? bestFmt.assetUuid : curAsset," +
+                                "    bestLabel: bestFmt ? (bestFmt.label || bestFmt.shortLabel || curLabel || 'Original') : (curLabel || 'Original')" +
+                                "  };" +
+                                "} catch(e) { return { ready: false, err: e.toString() }; }" +
+                            "})()", function (eR, pInfo) {
+                                if (!pInfo || !pInfo.ready) {
+                                    if (waitTries >= 40) {
+                                        finishSingle({ ok: false, error: "Quá thời gian chờ tải trang Envato (" + itemKey + ")" });
+                                        return;
+                                    }
+                                    activeTimer = setTimeout(pollItemPageReady, 600);
+                                    return;
+                                }
+                                if (pInfo.needLogin) {
+                                    setLoggedIn(false, "");
+                                    finishSingle({
+                                        ok: false,
+                                        needLogin: true,
+                                        error: "Tài khoản Envato chưa đăng nhập hoặc phiên đăng nhập đã hết hạn"
+                                    });
+                                    return;
+                                }
+
+                                chosenFormatLabel = pInfo.bestLabel || "4K / Original";
+                                var sizeMatch = /(\d+(?:[.,]\d+)?)\s*(MB|MO|GB|GO)/i.exec(chosenFormatLabel);
+                                if (sizeMatch) {
+                                    var num = parseFloat(String(sizeMatch[1]).replace(",", "."));
+                                    var unit = sizeMatch[2].toUpperCase();
+                                    totalExpectedBytes = Math.round(num * ((unit === "GB" || unit === "GO") ? 1073741824 : 1048576));
+                                }
+
+                                function triggerDownloadClick() {
+                                    if (onStatus) onStatus("Đang tải Envato [" + itemKey.substring(0, 8) + "] — " + chosenFormatLabel + "...");
+                                    showCopyProgress("Envato [" + itemKey.substring(0, 8) + "] " + chosenFormatLabel, 0, totalExpectedBytes, 0);
+                                    cdp.evalJs("(function(){" +
+                                        "var b = document.querySelector('[data-cy=\"idp-download-button\"]');" +
+                                        "if (b) { b.click(); return true; }" +
+                                        "return false;" +
+                                    "})()", function () {
+                                        waitForDownloadFile();
+                                    });
+                                }
+
+                                // Nếu format đang chọn chưa phải cao nhất thì mở dropdown chọn lại format cao nhất
+                                if (pInfo.bestAsset && pInfo.curAsset && pInfo.bestAsset !== pInfo.curAsset) {
+                                    cdp.evalJs("(function(){" +
+                                        "var trig = document.querySelector('[data-cy=\"idp-format-dropdown-trigger\"]');" +
+                                        "if (trig) trig.click();" +
+                                    "})()", function () {
+                                        setTimeout(function () {
+                                            cdp.evalJs("(function(){" +
+                                                "var opt = document.querySelector('[data-analytics-asset_uuid=\"" + pInfo.bestAsset + "\"]');" +
+                                                "if (opt) opt.click();" +
+                                            "})()", function () {
+                                                setTimeout(triggerDownloadClick, 350);
+                                            });
+                                        }, 400);
+                                    });
+                                } else {
+                                    triggerDownloadClick();
+                                }
+                            });
+                        }
+
+                        if (alreadyOnAppPage) {
+                            // Trình duyệt đã tự động 302 redirect sang đúng trang app.envato.com của video này -> không cần load lại lần 2!
+                            activeTimer = setTimeout(pollItemPageReady, 200);
+                        } else {
+                            cdp.evalJs("(function(){ try { window.__aicLeavingPage = true; } catch(e){} })()", function () {
+                                cdp.send("Page.navigate", { url: appItemUrl }, function () {
+                                    activeTimer = setTimeout(pollItemPageReady, 800);
+                                });
+                            });
+                        }
+
+                        function waitForDownloadFile() {
+                            var dlPolls = 0;
+                            function checkDiskAndStatus() {
+                                if (cancelled || state.shouldCancel) { finishSingle({ ok: false, cancelled: true }); return; }
+                                dlPolls++;
+
+                        // Nếu sau 3 giây chưa bắt đầu tải, kiểm tra xem có popup hỏi License (Anh/Pháp/Việt) hoặc nút tải chưa ăn click đầu
+                                if (!dlStarted && (dlPolls === 4 || dlPolls === 8)) {
+                                    cdp.evalJs("(function(){" +
+                                        "var dlgs = document.querySelectorAll('[role=\"dialog\"]');" +
+                                        "for (var d = 0; d < dlgs.length; d++) {" +
+                                        "  var dlg = dlgs[d];" +
+                                        "  if (!dlg || (!dlg.offsetWidth && !(dlg.innerText || '').trim())) continue;" +
+                                        "  var btns = dlg.querySelectorAll('button');" +
+                                        "  for (var i = 0; i < btns.length; i++) {" +
+                                        "    var t = (btns[i].textContent || '').toLowerCase();" +
+                                        "    if (t.indexOf('without license') !== -1 || t.indexOf('sans licence') !== -1 || t.indexOf('download') !== -1 || t.indexOf('télécharger') !== -1 || t.indexOf('telecharger') !== -1 || t.indexOf('skip') !== -1 || t.indexOf('continue') !== -1) {" +
+                                        "      btns[i].click(); return { clickedDialog: true };" +
+                                        "    }" +
+                                        "  }" +
+                                        "}" +
+                                        "var b = document.querySelector('[data-cy=\"idp-download-button\"]');" +
+                                        "if (b && b.getAttribute('aria-busy') !== 'true') { b.click(); return { retriedClick: true }; }" +
+                                        "return { clickedDialog: false };" +
+                                    "})()", function () {});
+                                }
+
+                                try {
+                                    var files = nodeFs.readdirSync(tempDlDir);
+                                    var finishedFile = "";
+                                    var crFile = "";
+                                    for (var i = 0; i < files.length; i++) {
+                                        var fName = files[i];
+                                        var lower = fName.toLowerCase();
+                                        if (lower.indexOf(".crdownload") !== -1 || lower.indexOf(".part") !== -1 || lower.indexOf(".tmp") !== -1) {
+                                            crFile = nodePath.join(tempDlDir, fName);
+                                        } else if (/\.(mp4|mov|m4v|webm|mkv|zip)$/i.test(lower)) {
+                                            var candFull = nodePath.join(tempDlDir, fName);
+                                            if (statFileSize(candFull) > 0) finishedFile = candFull;
+                                        }
+                                    }
+
+                                    if (crFile) {
+                                        dlStarted = true;
+                                        var curSz = statFileSize(crFile);
+                                        if (curSz > 0) onProgressUpdate(curSz, totalExpectedBytes);
+                                    }
+
+                                    if (finishedFile && !crFile) {
+                                        var finalSz = statFileSize(finishedFile);
+                                        var ext = nodePath.extname(finishedFile).toLowerCase() || ".mp4";
+                                        var destNoExt = nodePath.join(footageDir, "envato_" + itemKey);
+                                        var destFull = destNoExt + ext;
+
+                                        if (ext === ".zip") {
+                                            var unzipped = extractVideoFromZipIfNeeded(finishedFile, destNoExt);
+                                            if (unzipped) destFull = unzipped;
+                                        } else {
+                                            try {
+                                                if (nodeFs.existsSync(destFull)) nodeFs.unlinkSync(destFull);
+                                                nodeFs.renameSync(finishedFile, destFull);
+                                            } catch (eRen) {
+                                                nodeFs.copyFileSync(finishedFile, destFull);
+                                                try { nodeFs.unlinkSync(finishedFile); } catch (eU2) {}
+                                            }
+                                        }
+
+                                        var savedName = nodePath.basename(destFull);
+                                        saveCacheMap(footageDir, function (m) {
+                                            m[url] = savedName;
+                                            m[itemKey] = savedName;
+                                            if (resolvedUuid) m[resolvedUuid] = savedName;
+                                        });
+                                        state.envatoFiles[url] = destFull;
+                                        state.envatoFiles[itemKey] = destFull;
+                                        if (resolvedUuid) state.envatoFiles[resolvedUuid] = destFull;
+                                        state.copiedBytes += (finalSz > 0 ? finalSz : 0);
+                                        lastDownloadFinishedAt = Date.now();
+
+                                        finishSingle({
+                                            ok: true,
+                                            cached: false,
+                                            filePath: destFull,
+                                            formatLabel: chosenFormatLabel,
+                                            bytes: finalSz
+                                        });
+                                        return;
+                                    }
+                                } catch (eScan) {}
+
+                                // Timeout: nếu sau 25 giây vẫn chưa bắt đầu tải, hoặc quá 15 phút cho file 4K lớn
+                                if (!dlStarted && dlPolls >= 35) {
+                                    finishSingle({
+                                        ok: false,
+                                        error: "Envato không phản hồi lệnh tải cho mã " + itemKey + " (kiểm tra tài khoản đã có gói đăng ký Envato hoạt động chưa)"
+                                    });
+                                    return;
+                                }
+                                if (dlPolls >= 1200) {
+                                    finishSingle({ ok: false, error: "Quá thời gian tải file Envato (" + itemKey + ")" });
+                                    return;
+                                }
+                                activeTimer = setTimeout(checkDiskAndStatus, 750);
+                            }
+                            activeTimer = setTimeout(checkDiskAndStatus, 800);
+                        }
+                    });
+                });
+            });
+        }
+
+        if (waitMs > 200) {
+            var waitUntil = Date.now() + waitMs;
+            function tickJitter() {
+                if (cancelled || state.shouldCancel) {
+                    cb({ ok: false, cancelled: true, error: "Đã huỷ" });
+                    return;
+                }
+                var rem = waitUntil - Date.now();
+                if (rem <= 0) {
+                    proceedAfterJitter();
+                    return;
+                }
+                if (onStatus) {
+                    onStatus("⏳ Nghỉ " + (rem / 1000).toFixed(1) + "s giữa các lần tải để bảo vệ tài khoản Envato...");
+                }
+                activeTimer = setTimeout(tickJitter, 300);
+            }
+            tickJitter();
+        } else {
+            proceedAfterJitter();
+        }
+    }
+
+    function downloadBatch(items, footageDir, onStep, cb) {
+        cancelled = false;
+        var idx = 0, downloadedCount = 0, errors = [];
+        function next() {
+            if (cancelled || state.shouldCancel) {
+                cb({ ok: false, cancelled: true, downloadedCount: downloadedCount, errors: errors });
+                return;
+            }
+            if (idx >= items.length) {
+                cb({ ok: true, downloadedCount: downloadedCount, errors: errors });
+                return;
+            }
+            var item = items[idx];
+            downloadSingleItem(item, footageDir, function (statusMsg) {
+                if (onStep) onStep(item, idx, items.length, statusMsg);
+            }, function (res) {
+                if (res.cancelled) {
+                    cb({ ok: false, cancelled: true, downloadedCount: downloadedCount, errors: errors });
+                    return;
+                }
+                if (res.needLogin) {
+                    cb({ ok: false, needLogin: true, error: res.error, downloadedCount: downloadedCount, errors: errors });
+                    return;
+                }
+                if (!res.ok) {
+                    errors.push((item.key || item.url) + ": " + res.error);
+                    addLog("warning", "Envato [" + (item.key || "") + "]: " + res.error);
+                } else {
+                    if (!res.cached) {
+                        downloadedCount++;
+                        addLog("success", "Đã tải Envato [" + (item.key || "").substring(0, 8) + "] (" + (res.formatLabel || "Highest") + ") → " + nodePath.basename(res.filePath));
+                    } else {
+                        addLog("info", "Dùng lại file Envato đã có trong Footage/: " + nodePath.basename(res.filePath));
+                    }
+                }
+                idx++;
+                next();
+            });
+        }
+        next();
+    }
+
+    return {
+        isAvailable: isAvailable,
+        isLoggedIn: function () { return loggedInState; },
+        getLoggedInUser: function () { return loggedInUser; },
+        getEnvatoItemKey: getEnvatoItemKey,
+        findLocalCachedFile: findLocalCachedFile,
+        checkLoginStatus: checkLoginStatus,
+        openLoginWindow: openLoginWindow,
+        downloadBatch: downloadBatch,
+        cancel: cancel
+    };
+})();
+
+function updateEnvatoAuthUI() {
+    var logged = EnvatoDownloader.isLoggedIn();
+    var user = EnvatoDownloader.getLoggedInUser();
+    if (dom.envatoBtnDot) {
+        dom.envatoBtnDot.className = "api-dot" + (logged ? " active" : " warning");
+    }
+    if (dom.envatoBtnText) {
+        dom.envatoBtnText.textContent = logged ? "Envato ✓" : "Envato";
+    }
+    if (dom.btnEnvatoAuth) {
+        dom.btnEnvatoAuth.title = logged
+            ? ("Đã đăng nhập Envato (" + (user || "Active") + ") — bấm để mở trình duyệt kiểm tra/đổi tài khoản")
+            : "Chưa đăng nhập Envato — bấm để mở trình duyệt Chrome đăng nhập tài khoản cá nhân";
+    }
+}
 
 /**
  * Lấy đường dẫn thư mục temp của Premiere — nơi hostscript.jsx ghi file báo tiến độ copy.
@@ -750,8 +2236,14 @@ window.addEventListener("DOMContentLoaded", function () {
     setupColumnMapping();
     setupAI();
     setupChangelog();
+    updateEnvatoAuthUI();
     updateLogVisibility();
     setInterval(checkPremiereEnvironment, 5000);
+
+    // Kiểm tra trạng thái đăng nhập Envato ngầm (không tự mở trình duyệt)
+    setTimeout(function () {
+        EnvatoDownloader.checkLoginStatus({ openIfNeeded: false });
+    }, 1500);
 
     // Vừa cập nhật xong ở lần chạy trước? Báo kết quả ngay, trước mọi thứ khác.
     // (reportUpdateResult tự gọi syncHostScript trong trường hợp đó.)
@@ -867,13 +2359,17 @@ function reportUpdateResult() {
  * Gọi ở đây thì không còn lần nạp lại nào phía sau để đè lên nữa.
  */
 function syncHostScript(cb) {
-    var probe = "(function(){ try { return (typeof IMPORTCUT_VERSION !== 'undefined') ? IMPORTCUT_VERSION : ''; } catch(e) { return ''; } })()";
+    var probe = "(function(){ try { return ((typeof IMPORTCUT_VERSION !== 'undefined') ? IMPORTCUT_VERSION : '') + '|' + (typeof resolveSourceFileOnly === 'function' ? '1' : '0') + '|' + (typeof findCachedEnvatoFile === 'function' ? '1' : '0'); } catch(e) { return ''; } })()";
     csInterface.evalScript(probe, function (b) {
-        var loaded = String(b === undefined || b === null ? "" : b).replace(/^"|"$/g, "");
-        if (loaded === APP_VERSION) { cb(true, loaded, ""); return; }
+        var raw = String(b === undefined || b === null ? "" : b).replace(/^"|"$/g, "");
+        var parts = raw.split("|");
+        var loaded = parts[0] || "";
+        var hasNewCopyEngine = (parts[1] === "1");
+        var hasEnvatoSupport = (parts[2] === "1");
+        if (loaded === APP_VERSION && hasNewCopyEngine && hasEnvatoSupport) { cb(true, loaded, ""); return; }
         if (typeof Updater === "undefined" || !Updater.reloadHost) { cb(false, loaded, "khong co Updater.reloadHost"); return; }
 
-        addLog("info", "Script trong Premiere là bản " + (loaded || "?") + ", đang nạp lại bản " + APP_VERSION + "…");
+        addLog("info", "Đang nạp lại script tốc độ cao vào Premiere (bản " + APP_VERSION + ")…");
         Updater.reloadHost(APP_VERSION).then(function (r) {
             if (r.ok) addLog("success", "Đã nạp lại script trong Premiere: bản " + APP_VERSION);
             else addLog("warning", "Nạp lại script thất bại — " + (r.detail || ""));
@@ -996,6 +2492,15 @@ function setupEventListeners() {
     if (dom.btnCopyRelink) dom.btnCopyRelink.addEventListener("click", copyAndRelinkFootage);
     if (dom.btnExportXml) dom.btnExportXml.addEventListener("click", function () { exportProjectXml(false); });
     if (dom.btnOpenXmlDir) dom.btnOpenXmlDir.addEventListener("click", openXmlFolder);
+    if (dom.btnEnvatoAuth) {
+        dom.btnEnvatoAuth.addEventListener("click", function () {
+            EnvatoDownloader.openLoginWindow(function () {
+                if (state.scriptValidated && state.mediaCheckItems && state.mediaCheckItems.length > 0) {
+                    renderMediaCheck(state.mediaCheckItems);
+                }
+            });
+        });
+    }
     if (dom.toastClose) dom.toastClose.addEventListener("click", hideToast);
     if (dom.mediaCheckClose) dom.mediaCheckClose.addEventListener("click", toggleMediaCheck);
     if (dom.mediaCheckStart) dom.mediaCheckStart.addEventListener("click", function () {
@@ -1403,6 +2908,7 @@ function resetStartButton() {
 function scriptLoadedForCheck() {
     state.scriptValidated = false;
     state.checkInProgress = true;
+    state.mediaTypeEnabled = { nas: true, envato: true, youtube: true };
     dom.btnStart.disabled = true;
     dom.btnStart.style.display = "inline-flex";
     dom.btnStart.innerHTML = "<span>✂️ Bắt đầu cắt</span>";
@@ -1469,7 +2975,12 @@ function validateScriptSources() {
     dom.btnLoadCheck.innerHTML = "<span>⏳ Đang kiểm tra media…</span>";
     showStopButton(true);
     if (!state.checkProgressTimer) startCheckProgress("Đang kiểm tra đường dẫn và mã file...", 68, 94);
-    var payload = { csvContent: state.csvContent, cols: state.parsedData.cols, enableTram: true };
+    var payload = {
+        csvContent: state.csvContent,
+        cols: state.parsedData.cols,
+        enableTram: true,
+        folderRandomCount: parseInt(dom.txtFolderRandomCount ? dom.txtFolderRandomCount.value : 3, 10) || 3
+    };
     evalJson("cep_validateSources(" + toEscapedJson(JSON.stringify(payload)) + ")", function (res, err) {
         if (state.checkCancelled) return;
         resetLoadCheckButton();
@@ -1483,6 +2994,7 @@ function validateScriptSources() {
         }
         stopCheckProgress();
         state.checkInProgress = false;
+        state.footageFolderPath = res.footageFolderPath || "";
         renderMediaCheck(res.items || []);
     });
 }
@@ -1523,6 +3035,16 @@ function stopCheckProgress() {
  * danh tinh cua file. Trung checkKey = trung file.
  * Giu nguyen thu tu xuat hien dau tien de danh sach khong bi xao tron.
  */
+function getItemMediaType(item) {
+    if (!item) return "nas";
+    if (item.mediaType === "youtube" || item.isYouTube) return "youtube";
+    if (item.mediaType === "envato" || item.isEnvato) return "envato";
+    var c = String(item.code || item.requested || "").toLowerCase();
+    if (c.indexOf("youtube.com/") !== -1 || c.indexOf("youtu.be/") !== -1) return "youtube";
+    if (c.indexOf("envato.com/") !== -1) return "envato";
+    return "nas";
+}
+
 function groupMediaItems(items) {
     var order = [];
     var map = {};
@@ -1531,7 +3053,7 @@ function groupMediaItems(items) {
         // (vi du mot file ten "constructor" se lam map[key] tra ve ham dung).
         var key = "k_" + (item.checkKey || item.id);
         if (!map[key]) {
-            map[key] = { items: [], found: true };
+            map[key] = { items: [], found: true, mediaType: getItemMediaType(item) };
             order.push(map[key]);
         }
         map[key].items.push(item);
@@ -1554,11 +3076,26 @@ function mediaRowMain(item) {
  * nhom duoc thay, khong can bam lai tung dong.
  */
 function renderMediaGroup(group) {
-    var status = group.found ? "check-found" : "check-not-found";
-    var label = group.found ? "✓ Đã tìm thấy" : "✕ Không tìm thấy";
     var first = group.items[0];
+    var mType = group.mediaType || getItemMediaType(first);
+    var isEnabled = !state.mediaTypeEnabled || state.mediaTypeEnabled[mType] !== false;
+    var status = !isEnabled ? "check-disabled" : (group.found ? "check-found" : "check-not-found");
+    var isEnvato = (mType === "envato");
+    var isYouTube = (mType === "youtube");
+    var isCached = !!(first && (first.envatoCached || (isEnvato && EnvatoDownloader.findLocalCachedFile(state.footageFolderPath, first.code))));
+    var isYtCached = !!(first && first.ytCached);
+    var label;
+    if (!isEnabled) {
+        label = "⏸️ Đã tắt (Bỏ qua)";
+    } else if (group.found) {
+        if (isEnvato) label = isCached ? "✓ Đã có trong Footage" : "☁️ Envato (Tự tải 4K)";
+        else if (isYouTube) label = isYtCached ? "✓ Đã có trong Footage" : "▶️ YouTube (Tự tải MP4)";
+        else label = "✓ Đã tìm thấy";
+    } else {
+        label = "✕ Không tìm thấy";
+    }
     var many = group.items.length > 1;
-    var action = group.found ? "" :
+    var action = (!isEnabled || group.found) ? "" :
         '<button class="btn-find-media" data-media-id="' + escapeHtml(first.id) + '">🔎 Tìm &amp; thay thế' +
         (many ? " (cả " + group.items.length + " dòng)" : "") + '</button>';
 
@@ -1582,16 +3119,99 @@ function renderMediaGroup(group) {
         '</div>';
 }
 
-function renderMediaCheck(items) {
+function renderMediaCheck(items, isToggleRefresh) {
+    if (!state.mediaTypeEnabled) {
+        state.mediaTypeEnabled = { nas: true, envato: true, youtube: true };
+    }
     // Dem theo FILE chu khong theo dong: 1 file cat lam 3 doan van la 1 file.
     var groups = groupMediaItems(items);
     var totalFiles = groups.length;
-    var missing = groups.filter(function (group) { return !group.found; }).length;
 
-    dom.mediaCheckSummary.innerHTML = "Đã kiểm tra <strong>" + totalFiles + "</strong> file" +
+    var nasGroups = groups.filter(function (g) { return g.mediaType === "nas"; });
+    var envatoGroups = groups.filter(function (g) { return g.mediaType === "envato"; });
+    var youtubeGroups = groups.filter(function (g) { return g.mediaType === "youtube"; });
+
+    var activeGroups = groups.filter(function (g) { return state.mediaTypeEnabled[g.mediaType] !== false; });
+    var missing = activeGroups.filter(function (group) { return !group.found; }).length;
+
+    var envatoCachedCount = envatoGroups.filter(function (g) {
+        var f = g.items[0];
+        return f && (f.envatoCached || EnvatoDownloader.findLocalCachedFile(state.footageFolderPath, f.code));
+    }).length;
+    var envatoNeedDlCount = envatoGroups.length - envatoCachedCount;
+
+    var summaryHtml = "Đã kiểm tra <strong>" + totalFiles + "</strong> file" +
         (items.length > totalFiles ? " (" + items.length + " dòng)" : "") + ": " +
-        "<span class=\"check-ok\">" + (totalFiles - missing) + " tìm thấy</span>, " +
-        "<span class=\"check-missing\">" + missing + " chưa tìm thấy</span>.";
+        "<span class=\"check-ok\">" + (activeGroups.length - missing) + " hợp lệ đang bật</span>" +
+        (missing > 0 ? (", <span class=\"check-missing\">" + missing + " chưa tìm thấy</span>") : "") +
+        (activeGroups.length < totalFiles ? (", <span class=\"check-skipped-note\">" + (totalFiles - activeGroups.length) + " đang tắt</span>") : "") + ".";
+
+    // Thanh bật/tắt 3 thể loại media (chỉ hiển thị thể loại nào thực sự tìm thấy trong kịch bản)
+    var typeTogglesHtml = "";
+    function buildTypeToggleBtn(typeKey, icon, titleText, count) {
+        var isOn = (state.mediaTypeEnabled[typeKey] !== false);
+        return '<button type="button" class="media-type-toggle ' + (isOn ? 'is-on' : 'is-off') + ' type-' + typeKey + '" data-media-type="' + typeKey + '" title="Bấm để bật/tắt tải và cắt ' + titleText + '">' +
+            '<span class="mtt-switch"><span class="mtt-knob"></span></span>' +
+            '<span class="mtt-label">' + icon + ' ' + titleText + '</span>' +
+            '<span class="mtt-count">' + count + '</span>' +
+        '</button>';
+    }
+    if (nasGroups.length > 0) {
+        typeTogglesHtml += buildTypeToggleBtn("nas", "📁", "File NAS", nasGroups.length);
+    }
+    if (envatoGroups.length > 0) {
+        typeTogglesHtml += buildTypeToggleBtn("envato", "🎬", "Envato", envatoGroups.length);
+    }
+    if (youtubeGroups.length > 0) {
+        typeTogglesHtml += buildTypeToggleBtn("youtube", "▶️", "YouTube", youtubeGroups.length);
+    }
+    if (typeTogglesHtml !== "") {
+        summaryHtml += '<div class="media-type-bar">' +
+            '<span class="media-type-bar-label">Chọn loại file tải &amp; cắt:</span>' +
+            '<div class="media-type-bar-btns">' + typeTogglesHtml + '</div>' +
+        '</div>';
+    }
+
+    if (envatoGroups.length > 0 && state.mediaTypeEnabled.envato !== false) {
+        var logged = EnvatoDownloader.isLoggedIn();
+        var user = EnvatoDownloader.getLoggedInUser();
+        var needLoginBanner = (!logged && envatoNeedDlCount > 0);
+        summaryHtml += '<div class="envato-check-banner' + (needLoginBanner ? ' need-login' : '') + '">' +
+            '<div class="envato-banner-info">' +
+                '<strong>🎬 Phát hiện ' + envatoGroups.length + ' video Envato</strong> (' +
+                (envatoCachedCount > 0 ? (envatoCachedCount + ' đã có trong Footage, ') : '') +
+                (envatoNeedDlCount > 0 ? ('cần tải mới ' + envatoNeedDlCount + ' video chất lượng cao nhất 4K/Original') : 'tất cả đã có sẵn trong Footage') + ')' +
+                '<span class="envato-banner-sub">' +
+                    (logged
+                        ? ('✓ Đã đăng nhập Envato (' + escapeHtml(user || 'Active') + ') · Chạy ngầm 100% + bảo vệ tài khoản')
+                        : (envatoNeedDlCount > 0
+                            ? '⚠️ Yêu cầu đăng nhập tài khoản Envato trên trình duyệt trước khi bắt đầu tải & cắt'
+                            : 'ℹ️ Tất cả video Envato trong kịch bản đã được tải sẵn trong thư mục Footage')) +
+                '</span>' +
+            '</div>' +
+            '<button class="btn-envato-action" id="btnBannerEnvatoLogin">' +
+                (logged ? '🔄 Kiểm tra / Đổi TK' : '🔑 Đăng nhập Envato') +
+            '</button>' +
+        '</div>';
+    }
+
+    dom.mediaCheckSummary.innerHTML = summaryHtml;
+    Array.prototype.forEach.call(dom.mediaCheckSummary.querySelectorAll(".media-type-toggle"), function (btn) {
+        btn.addEventListener("click", function () {
+            var tKey = btn.getAttribute("data-media-type");
+            if (!tKey) return;
+            state.mediaTypeEnabled[tKey] = !(state.mediaTypeEnabled[tKey] !== false);
+            renderMediaCheck(state.mediaCheckItems || items, true);
+        });
+    });
+    var btnBannerEnvato = document.getElementById("btnBannerEnvatoLogin");
+    if (btnBannerEnvato) {
+        btnBannerEnvato.addEventListener("click", function () {
+            EnvatoDownloader.openLoginWindow(function () {
+                renderMediaCheck(state.mediaCheckItems || items, true);
+            });
+        });
+    }
     if (!items.length) dom.mediaCheckList.innerHTML = '<div class="log-empty">Không có file media hợp lệ trong dữ liệu.</div>';
     else dom.mediaCheckList.innerHTML = groups.map(renderMediaGroup).join("");
     Array.prototype.forEach.call(dom.mediaCheckList.querySelectorAll(".btn-find-media"), function (button) {
@@ -1602,22 +3222,34 @@ function renderMediaCheck(items) {
     });
     state.mediaCheckItems = items;
     state.scriptValidated = true;
-    dom.btnStart.disabled = false;
-    dom.mediaCheckStart.disabled = false;
-    dom.mediaCheckStart.textContent = missing ? "✂️ Bắt đầu cắt (bỏ qua file thiếu)" : "✂️ Bắt đầu cắt";
-    dom.mediaCheckPanel.classList.add("visible");
-    dom.mediaCheckPanel.classList.remove("collapsed"); // ket qua moi -> luon mo san
-    dom.mediaCheckClose.textContent = "Thu gọn";
-    dom.mediaCheckClose.title = "Thu gọn";
-    showStopButton(false);
-    state.checkInProgress = false;
-    resetLoadCheckButton();
-    dom.progressBarFill.style.width = "100%";
-    dom.progressPercent.textContent = "100%";
-    dom.progressStepText.textContent = "Đã kiểm tra kịch bản";
-    dom.btnStart.innerHTML = "<span>✂️ Bắt đầu cắt</span>";
-    addLog(missing ? "warning" : "success", "Kiểm tra media: " + (totalFiles - missing) + "/" + totalFiles + " file tìm thấy" +
-        (items.length > totalFiles ? (" (" + items.length + " dòng dùng chung các file này).") : "."));
+    var allDisabled = (totalFiles > 0 && activeGroups.length === 0);
+    dom.btnStart.disabled = allDisabled;
+    dom.mediaCheckStart.disabled = allDisabled;
+    if (allDisabled) {
+        dom.mediaCheckStart.textContent = "✂️ Hãy bật ít nhất 1 loại file để cắt";
+    } else {
+        dom.mediaCheckStart.textContent = missing ? "✂️ Bắt đầu cắt (bỏ qua file thiếu)" : "✂️ Bắt đầu cắt";
+    }
+    if (!isToggleRefresh) {
+        dom.mediaCheckPanel.classList.add("visible");
+        dom.mediaCheckPanel.classList.remove("collapsed"); // ket qua moi -> luon mo san
+        dom.mediaCheckClose.textContent = "Thu gọn";
+        dom.mediaCheckClose.title = "Thu gọn";
+        showStopButton(false);
+        state.checkInProgress = false;
+        resetLoadCheckButton();
+        dom.progressBarFill.style.width = "100%";
+        dom.progressPercent.textContent = "100%";
+        dom.progressStepText.textContent = "Đã kiểm tra kịch bản";
+        dom.btnStart.innerHTML = "<span>✂️ Bắt đầu cắt</span>";
+        var breakdown = [];
+        if (nasGroups.length > 0) breakdown.push(nasGroups.length + " File NAS");
+        if (envatoGroups.length > 0) breakdown.push(envatoGroups.length + " Envato");
+        if (youtubeGroups.length > 0) breakdown.push(youtubeGroups.length + " YouTube");
+        addLog(missing ? "warning" : "success", "Kiểm tra media: " + (totalFiles - missing) + "/" + totalFiles + " file hợp lệ" +
+            (breakdown.length > 0 ? (" [" + breakdown.join(", ") + "]") : "") +
+            (items.length > totalFiles ? (" (" + items.length + " dòng dùng chung các file này).") : "."));
+    }
 }
 
 function chooseMediaReplacement(items, id) {
@@ -1665,7 +3297,69 @@ function copyMediaText(text) {
 // =========================================================================
 
 function startImportProcess() {
-    if (!state.parsedData) return;
+    if (!state.parsedData || state.isRunning) return;
+
+    // Kiểm tra xem kịch bản có chứa link Envato chưa tải về Footage/ hay không (chỉ khi tuỳ chọn Envato đang bật)
+    var envatoEnabled = !state.mediaTypeEnabled || state.mediaTypeEnabled.envato !== false;
+    var uncachedEnvato = !envatoEnabled ? [] : (state.mediaCheckItems || []).filter(function (item) {
+        if (!item || !item.isEnvato) return false;
+        if (item.envatoCached) return false;
+        var cachedLocal = EnvatoDownloader.findLocalCachedFile(state.footageFolderPath, item.code);
+        return !cachedLocal;
+    });
+
+    if (uncachedEnvato.length > 0) {
+        dom.btnStart.disabled = true;
+        dom.btnStart.innerHTML = "<span>⏳ Kiểm tra Envato…</span>";
+        if (dom.mediaCheckStart) dom.mediaCheckStart.disabled = true;
+        addLog("info", "Đang kiểm tra trạng thái đăng nhập tài khoản Envato trước khi tải " + uncachedEnvato.length + " mục...");
+
+        EnvatoDownloader.checkLoginStatus({ openIfNeeded: true }, function (authRes) {
+            if (authRes && authRes.loggedIn) {
+                if (state.mediaCheckItems && state.mediaCheckItems.length > 0) {
+                    renderMediaCheck(state.mediaCheckItems);
+                }
+                startImportProcessCore();
+                return;
+            }
+
+            resetStartButton();
+            if (dom.mediaCheckStart) dom.mediaCheckStart.disabled = false;
+
+            // Tự động lắng nghe khi người dùng đăng nhập xong trên cửa sổ Chrome vừa mở
+            EnvatoDownloader.openLoginWindow(function () {
+                if (isDialogOpen()) closeDialog(false);
+                if (state.mediaCheckItems && state.mediaCheckItems.length > 0) {
+                    renderMediaCheck(state.mediaCheckItems);
+                }
+                if (!state.isRunning) {
+                    startImportProcessCore();
+                }
+            });
+
+            showConfirm(
+                "Yêu cầu đăng nhập Envato trước khi tải",
+                "Kịch bản có chứa video từ <strong>Envato</strong> cần tải về thư mục <code>Footage/</code>.<br><br>" +
+                "Cửa sổ trình duyệt <strong>Envato</strong> đã được mở. Vui lòng đăng nhập <strong>tài khoản cá nhân</strong> của bạn trên trình duyệt đó.<br><br>" +
+                "• Ưu tiên tải chất lượng cao nhất (<strong>4K / Original</strong>)<br>" +
+                "• Tải tuần tự từng video kèm độ trễ ngẫu nhiên (3.5–6.5s) để <strong>phòng tránh khoá tài khoản</strong><br><br>" +
+                "<em>Sau khi bạn đăng nhập xong trên trình duyệt, panel sẽ tự động phát hiện và bắt đầu tải &amp; cắt ngay!</em>",
+                "🔄 Đã đăng nhập, kiểm tra lại",
+                function (ok) {
+                    if (ok && !state.isRunning) {
+                        startImportProcess();
+                    }
+                }
+            );
+        });
+        return;
+    }
+
+    startImportProcessCore();
+}
+
+function startImportProcessCore() {
+    if (!state.parsedData || state.isRunning) return;
 
     state.isRunning = true;
     state.shouldCancel = false;
@@ -1692,6 +3386,11 @@ function startImportProcess() {
         singleTimeDuration: parseFloat(dom.txtSingleTimeSec.value) || 5,
         noTimecodeMode: dom.radioFullVideo.checked ? "full" : "center",
         noTimecodeDuration: parseFloat(dom.txtCenterTimeSec.value) || 5,
+        folderRandomCount: parseInt(dom.txtFolderRandomCount ? dom.txtFolderRandomCount.value : 3, 10) || 3,
+        folderRandomDuration: parseFloat(dom.txtFolderRandomDuration ? dom.txtFolderRandomDuration.value : 2) || 2,
+        enableNas: !state.mediaTypeEnabled || state.mediaTypeEnabled.nas !== false,
+        enableEnvato: !state.mediaTypeEnabled || state.mediaTypeEnabled.envato !== false,
+        enableYouTube: !state.mediaTypeEnabled || state.mediaTypeEnabled.youtube !== false,
         footageFolderName: "Footage"
     };
 
@@ -1701,7 +3400,9 @@ function startImportProcess() {
     state.copiedBytes = 0;
     if (config.enableCopyToLocal) startCopyMonitor();
 
-    var initScript = "cep_initSession(" + toEscapedJson(JSON.stringify(config)) + ")";
+    var initScript = "cep_initSession(" + toEscapedJson(JSON.stringify(config)) + "," +
+                     toEscapedJson(state.csvContent) + "," +
+                     toEscapedJson(JSON.stringify(_sessionCols())) + ")";
     csInterface.evalScript(initScript, function (resStr) {
         addLog("info", "Bắt đầu dựng " + state.parsedData.dataRowCount + " dòng kịch bản lên Timeline...");
 
@@ -1743,6 +3444,33 @@ function startImportProcess() {
     });
 }
 
+function buildRowEvalScript(actualDataIndex, rowNumber, deferCopy, preCopiedCount, deferEnvato, preDownloadedCount) {
+    return "(function(){ " +
+        "var rows = (_session && _session.csvRows) ? _session.csvRows : parseCSV(" + toEscapedJson(state.csvContent) + "); " +
+        "var cols = " + toEscapedJson(_sessionCols()) + "; " +
+        "var r = rows[" + actualDataIndex + "]; " +
+        "if (!r) return toJson({status:'skipped', details:'Dòng trống'}); " +
+        "var data = { " +
+        "   rowNumber: " + rowNumber + ", " +
+        "   rawRow: r, " +
+        "   body: (cols.bodyCol!==-1 ? r[cols.bodyCol] : ''), " +
+        "   source: (cols.sourceCol!==-1 ? r[cols.sourceCol] : ''), " +
+        "   code: (cols.codeCol!==-1 ? r[cols.codeCol] : ''), " +
+        "   time: (cols.timeCol!==-1 ? r[cols.timeCol] : ''), " +
+        "   tramSource: (cols.tramSourceCol!==-1 ? r[cols.tramSourceCol] : ''), " +
+        "   tramCode: (cols.tramCodeCol!==-1 ? r[cols.tramCodeCol] : ''), " +
+        "   tramTime: (cols.tramTimeCol!==-1 ? r[cols.tramTimeCol] : ''), " +
+        "   labelOverride: " + toEscapedJson(state.aiClipNames[String(rowNumber)] || "") + ", " +
+        "   deferCopy: " + (deferCopy ? "true" : "false") + ", " +
+        "   preCopiedCount: " + (preCopiedCount || 0) + ", " +
+        "   deferEnvato: " + (deferEnvato ? "true" : "false") + ", " +
+        "   preDownloadedCount: " + (preDownloadedCount || 0) + ", " +
+        "   envatoFiles: " + JSON.stringify(state.envatoFiles || {}) + " " +
+        "}; " +
+        "return cep_processSingleRow(toJson(data)); " +
+    "})()";
+}
+
 function processNextRow() {
     if (state.shouldCancel) {
         finishProcess("Đã dừng bởi người dùng");
@@ -1764,38 +3492,91 @@ function processNextRow() {
     dom.progressStepText.textContent = "Dòng " + (state.currentRowIdx + 1) + " / " + totalRows;
     dom.currentActionText.textContent = "Đang xử lý dòng " + rowNumber + "...";
 
-    var fallbackScript = "(function(){ " +
-        "var rows = parseCSV(" + toEscapedJson(state.csvContent) + "); " +
-        "var cols = " + toEscapedJson(_sessionCols()) + "; " +
-        "var r = rows[" + actualDataIndex + "]; " +
-        "if (!r) return toJson({status:'skipped', details:'Dòng trống'}); " +
-        "var data = { " +
-        "   rowNumber: " + rowNumber + ", " +
-        "   rawRow: r, " +
-        "   body: (cols.bodyCol!==-1 ? r[cols.bodyCol] : ''), " +
-        "   source: (cols.sourceCol!==-1 ? r[cols.sourceCol] : ''), " +
-        "   code: (cols.codeCol!==-1 ? r[cols.codeCol] : ''), " +
-        "   time: (cols.timeCol!==-1 ? r[cols.timeCol] : ''), " +
-        "   tramSource: (cols.tramSourceCol!==-1 ? r[cols.tramSourceCol] : ''), " +
-        "   tramCode: (cols.tramCodeCol!==-1 ? r[cols.tramCodeCol] : ''), " +
-        "   tramTime: (cols.tramTimeCol!==-1 ? r[cols.tramTimeCol] : ''), " +
-        "   labelOverride: " + toEscapedJson(state.aiClipNames[String(rowNumber)] || "") + " " +
-        "}; " +
-        "return cep_processSingleRow(toJson(data)); " +
-    "})()";
+    var useFastCopy = !!(dom.chkCopy.checked && FastCopy.isAvailable());
+    var useEnvatoDl = EnvatoDownloader.isAvailable();
 
-    csInterface.evalScript(fallbackScript, function (resStr) {
+    function handleEvalResult(resStr, preDownloadedCount) {
+        var result = null;
         try {
-            var result = JSON.parse(resStr);
-            handleRowResult(rowNumber, result);
+            result = JSON.parse(resStr);
         } catch (e) {
             addLog("error", "Dòng " + rowNumber + ": Lỗi xử lý - " + e.toString());
             state.stats.error++;
+            updateStatsUI();
+            state.currentRowIdx++;
+            setTimeout(processNextRow, 20);
+            return;
         }
 
+        // Bước 1: Nếu dòng này có link Envato chưa có trong Footage/, tải tuần tự qua trình duyệt thật (4K/Original)
+        if (result && result.status === "need_envato_download" && result.downloads && result.downloads.length > 0) {
+            var targetDir = result.footageDir || state.footageFolderPath;
+            EnvatoDownloader.downloadBatch(result.downloads, targetDir, function (item, idx, total, statusMsg) {
+                dom.currentActionText.textContent = "Dòng " + rowNumber + " (" + (idx + 1) + "/" + total + ") — " + statusMsg;
+            }, function (dlRes) {
+                if (dlRes.cancelled || state.shouldCancel) {
+                    finishProcess("Đã dừng bởi người dùng");
+                    return;
+                }
+                if (dlRes.needLogin) {
+                    finishProcess("Tạm dừng: Cần đăng nhập tài khoản Envato");
+                    showConfirm(
+                        "Phiên đăng nhập Envato đã hết hạn",
+                        "Tài khoản Envato chưa đăng nhập hoặc vừa hết hạn phiên.<br><br>" +
+                        "Đã tự động ngắt tải (Circuit Breaker) để bảo vệ tài khoản của bạn. Vui lòng đăng nhập lại trên cửa sổ trình duyệt trước khi chạy tiếp.",
+                        "🔑 Mở trình duyệt đăng nhập",
+                        function (ok) {
+                            if (ok) EnvatoDownloader.openLoginWindow();
+                        }
+                    );
+                    return;
+                }
+                dom.currentActionText.textContent = "Đang import & cắt video Envato dòng " + rowNumber + "...";
+                var afterDlScript = buildRowEvalScript(actualDataIndex, rowNumber, useFastCopy, 0, false, dlRes.downloadedCount || 0);
+                csInterface.evalScript(afterDlScript, function (resStrAfterDl) {
+                    handleEvalResult(resStrAfterDl, dlRes.downloadedCount || 0);
+                });
+            });
+            return;
+        }
+
+        // Bước 2: Nếu dòng này có file local cần copy về Footage/, dùng FastCopy (Node.js robocopy)
+        if (result && result.status === "need_copy" && result.copies && result.copies.length > 0) {
+            FastCopy.copyBatch(result.copies, function (item, idx, total) {
+                var szMB = item.sizeBytes ? (" (" + (Math.round(item.sizeBytes / 1048576 * 10) / 10) + " MB)") : "";
+                dom.currentActionText.textContent = "Dòng " + rowNumber + " — Đang copy (" + (idx + 1) + "/" + total + "): " + (item.name || "") + szMB;
+            }, function (batchRes) {
+                if (batchRes.cancelled || state.shouldCancel) {
+                    finishProcess("Đã dừng bởi người dùng");
+                    return;
+                }
+                dom.currentActionText.textContent = "Đang chèn clip dòng " + rowNumber + "...";
+                var cutScript = buildRowEvalScript(actualDataIndex, rowNumber, false, batchRes.copiedCount || 0, false, preDownloadedCount || 0);
+                csInterface.evalScript(cutScript, function (resStr2) {
+                    try {
+                        var result2 = JSON.parse(resStr2);
+                        handleRowResult(rowNumber, result2);
+                    } catch (e2) {
+                        addLog("error", "Dòng " + rowNumber + ": Lỗi xử lý - " + e2.toString());
+                        state.stats.error++;
+                    }
+                    updateStatsUI();
+                    state.currentRowIdx++;
+                    setTimeout(processNextRow, 20);
+                });
+            });
+            return;
+        }
+
+        handleRowResult(rowNumber, result);
         updateStatsUI();
         state.currentRowIdx++;
-        setTimeout(processNextRow, 25);
+        setTimeout(processNextRow, 20);
+    }
+
+    var rowScript = buildRowEvalScript(actualDataIndex, rowNumber, useFastCopy, 0, useEnvatoDl, 0);
+    csInterface.evalScript(rowScript, function (resStr) {
+        handleEvalResult(resStr, 0);
     });
 }
 
@@ -1861,21 +3642,22 @@ function resetLoadCheckButton() {
 /**
  * MOT nut dung cho ca ba viec. Thu tu kiem tra di tu viec "nang" nhat xuong.
  *
- * Copy & Relink va Import & Cat deu chay theo tung file / tung dong, nen chi can
- * dat co roi de vong lap tu dung o buoc ke tiep - KHONG cat ngang giua chung
- * duoc, vi ExtendScript dang copy file hoac chen clip thi Premiere bi khoa.
- * Rieng Tai & kiem tra la cho ket qua tra ve nen cat ngay duoc.
+ * Khi đang copy qua FastCopy (Node.js robocopy), có thể huỷ ngay lập tức và xoá file
+ * đang copy dở trong Footage/.
  */
 function cancelCurrentProcess() {
     if (state.relink) {
         state.relink.cancelled = true;
-        markStopping("Đang dừng — đợi copy xong file hiện tại…");
+        FastCopy.cancel();
+        markStopping("Đang dừng Copy & Relink…");
         addLog("info", "Đã yêu cầu dừng Copy & Relink Footage.");
         return;
     }
     if (state.isRunning) {
         state.shouldCancel = true;
-        markStopping("Đang dừng — đợi xong dòng hiện tại…");
+        FastCopy.cancel();
+        EnvatoDownloader.cancel();
+        markStopping("Đang dừng — đợi xong thao tác hiện tại…");
         addLog("info", "Đã yêu cầu dừng Import & Cắt.");
         return;
     }
@@ -1900,6 +3682,8 @@ function cancelCurrentProcess() {
 function finishProcess(message) {
     var wasCancelled = state.shouldCancel;
     state.isRunning = false;
+    FastCopy.cancel();
+    EnvatoDownloader.cancel();
     CopyMonitor.stop();
     csInterface.evalScript("cep_finishSession()", function () {});
 
@@ -2202,9 +3986,12 @@ function relinkNextFile() {
     dom.currentActionText.textContent = "Đang copy: " + f.name + (f.sizeMB ? " (" + f.sizeMB + " MB)" : "");
     setRelinkBusy(true, "⏳ " + (st.idx + 1) + "/" + total);
 
-    // setTimeout để giao diện kịp vẽ trước khi ExtendScript copy (thao tác này khoá Premiere)
-    setTimeout(function () {
-        evalJson("cep_copyRelinkOne(" + JSON.stringify(String(st.idx)) + ")", function (res, err) {
+    function doExtendScriptRelink(preCopied) {
+        if (st.cancelled) {
+            finishRelink(true);
+            return;
+        }
+        evalJson("cep_copyRelinkOne(" + JSON.stringify(String(st.idx)) + "," + (preCopied ? "1" : "0") + ")", function (res, err) {
             if (err) {
                 st.failed++;
                 st.errors.push(f.name + ": " + err);
@@ -2214,22 +4001,37 @@ function relinkNextFile() {
                 st.errors.push(res.error || "Lỗi không xác định");
                 addLog("error", res.error || ("Lỗi không xác định với " + f.name));
             } else {
-                if (res.copied) st.copied++;
+                if (res.copied || preCopied) st.copied++;
                 if (res.relinked) st.relinked += res.relinked;
                 if (res.note) addLog("warning", f.name + ": " + res.note);
                 if (res.error) addLog("warning", f.name + ": " + res.error);
-                else addLog("success", f.name + (res.copied ? " → đã copy" : " → đã có sẵn") + ", relink " + res.relinked + " source");
+                else addLog("success", f.name + ((res.copied || preCopied) ? " → đã copy" : " → đã có sẵn") + ", relink " + res.relinked + " source");
             }
             // File này xong (copy được hay bỏ qua) -> cộng vào tổng để tính % tổng
             if (state.copyPlan) state.copyPlan.doneBytes += (f.sizeBytes || 0);
             st.idx++;
-            setTimeout(relinkNextFile, 20);
+            setTimeout(relinkNextFile, 15);
         });
-    }, 30);
+    }
+
+    if (FastCopy.isAvailable() && f.mediaPath) {
+        var destPath = f.destPath || (String(st.footagePath || "").replace(/[\\\/]+$/, "") + "/" + f.name);
+        FastCopy.copyFile(f.mediaPath, destPath, f.sizeBytes || 0, function (cpRes) {
+            if (cpRes.cancelled || st.cancelled) {
+                finishRelink(true);
+                return;
+            }
+            dom.currentActionText.textContent = "Đang relink: " + f.name + "...";
+            doExtendScriptRelink(!!(cpRes.ok && cpRes.copied));
+        });
+    } else {
+        setTimeout(function () { doExtendScriptRelink(false); }, 25);
+    }
 }
 
 function finishRelink(cancelled) {
     var st = state.relink;
+    FastCopy.cancel();
     CopyMonitor.stop();
     state.copyPlan = null;
     showStopButton(false);
