@@ -1,17 +1,18 @@
 {
-    "version":  "2.1.8",
+    "version":  "2.4.0",
     "notes":  [
-                  "Thêm tính năng download từ Envato và youtube",
-                  
+                  "Phân loại \u0026 tuỳ chọn Bật/Tắt 3 thể loại media (File NAS, Envato, YouTube) tại mục Kiểm tra đường dẫn media",
+                  "Tích hợp tải ngầm (Headless) Stock Video 4K/Original từ Envato không hiện cửa sổ trình duyệt",
+                  "Sửa lỗi tải video YouTube trên Windows và ưu tiên codec H.264 (avc1) + AAC (.mp4) tương thích Premiere Pro"
               ],
     "files":  [
                   {
                       "path":  "index.html",
-                      "sha256":  "66d8c1bfd0b910096bf117d4978373c1476d58f22149fec4220de1acf3ae6820"
+                      "sha256":  "9c3debfc960378a621b2129f936fd1d8ea3d01cb11fd0aff895d5b5a5ca42197"
                   },
                   {
                       "path":  "css/style.css",
-                      "sha256":  "7ba0b961a093bd6b07254ebc93ce31bbed6cda3efcf08cc8947d809dfc2d6e1a"
+                      "sha256":  "cd4f4ca4e81f8de3e93a93d681d031597e18ea9f585514bc789f58ca47882089"
                   },
                   {
                       "path":  "js/CSInterface.js",
@@ -23,11 +24,11 @@
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "d4fdbf751e9ef6409168869155eab7c989885aff44adfe6344c1f405d41fb5d1"
+                      "sha256":  "89b0851297da2ba0a50e1d5fd724b6079b0f4b1d157cbe2bfe66fd1078af8719"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "0b81a89e16305ad6d55356334532b6995937e2b1e334c28c34b481a90e719d44"
+                      "sha256":  "7919956c746c38edfec27a05779a3b63f5df049cf542093a2961fe865a028a4b"
                   },
                   {
                       "path":  "sound/done.mp3",
