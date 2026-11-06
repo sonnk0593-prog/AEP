@@ -1,8 +1,8 @@
 {
-    "version":  "2.1.7",
+    "version":  "2.1.8",
     "notes":  [
-                  "Sửa lỗi thứ tự và đè clip trám V2 khi không có source chính V1",
-                  "Tự động để trống track V1 và chèn trám V2 tuần tự từ trái qua phải theo kịch bản"
+                  "Thêm tính năng download từ Envato và youtube",
+                  
               ],
     "files":  [
                   {
