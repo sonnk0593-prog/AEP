@@ -3,6 +3,16 @@
  */
 
 var csInterface = new CSInterface();
+(function () {
+    var _origEvalScript = csInterface.evalScript.bind(csInterface);
+    csInterface.evalScript = function (script, callback) {
+        var s = String(script || "");
+        if (s.indexOf("$.fileName") === -1 && s.indexOf("$.evalFile") === -1) {
+            s = "with ($.global.AIC_V3 || {}) { " + s + " }";
+        }
+        return _origEvalScript(s, callback);
+    };
+})();
 
 // ============================================================================
 // PHIÊN BẢN - phải KHỚP với IMPORTCUT_VERSION trong jsx/hostscript.jsx
@@ -10,7 +20,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "2.4.0";
+var APP_VERSION = "3.1.2";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -21,9 +31,10 @@ function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
  * Cũng bắt được trường hợp file .jsx đã cập nhật nhưng chưa được nạp lại.
  */
 function ensureOwnScript(cb) {
-    csInterface.evalScript("(function(){ try { return (typeof IMPORTCUT_VERSION !== 'undefined') ? IMPORTCUT_VERSION : ''; } catch(e) { return ''; } })()", function (b) {
+    csInterface.evalScript("(function(){ try { return ($.global.AIC_V3 && $.global.AIC_V3.IMPORTCUT_VERSION) ? $.global.AIC_V3.IMPORTCUT_VERSION : ''; } catch(e) { return ''; } })()", function (b) {
         var loaded = String(b === undefined || b === null ? "" : b).replace(/^"|"$/g, "");
         if (loaded === "" || loaded === APP_VERSION) { cb(true); return; }
+        var sameMajor = (versionMajorLabel(loaded) === versionMajorLabel(APP_VERSION));
 
         if (loaded.indexOf("EvalScript error") !== -1) {
             showAlert("Lỗi nạp script ExtendScript",
@@ -98,6 +109,8 @@ var state = {
     ,envatoFiles: {}
     ,footageFolderPath: ""
     ,mediaTypeEnabled: { nas: true, envato: true, youtube: true }
+    ,convertedFiles: {}
+    ,trimmedFiles: {}
 };
 
 // =========================================================================
@@ -308,10 +321,16 @@ var dom = {
     
     // Config
     chkCopy: document.getElementById("chkCopy"),
+    chkSmartTrimCopy: document.getElementById("chkSmartTrimCopy"),
+    txtTrimThresholdGB: document.getElementById("txtTrimThresholdGB"),
+    txtTrimPadSec: document.getElementById("txtTrimPadSec"),
     chkTram: document.getElementById("chkTram"),
     chkLabel: document.getElementById("chkLabel"),
     txtDefaultSec: document.getElementById("txtDefaultSec"),
     chkSingleTime: document.getElementById("chkSingleTime"),
+    radioSingleAfter: document.getElementById("radioSingleAfter"),
+    radioSingleBefore: document.getElementById("radioSingleBefore"),
+    txtSingleTimeAfterSec: document.getElementById("txtSingleTimeAfterSec"),
     txtSingleTimeSec: document.getElementById("txtSingleTimeSec"),
     radioCenterTime: document.getElementById("radioCenterTime"),
     radioFullVideo: document.getElementById("radioFullVideo"),
@@ -444,7 +463,7 @@ var CopyMonitor = (function () {
     var last = { name: "", bytes: 0, time: 0, speed: 0, fileTotal: 0 };
 
     function setProgressPath(p) {
-        progressPath = p ? String(p).replace(/[\\\/]+$/, "") + "/autoimportcut_v2_copy_progress.json" : "";
+        progressPath = p ? String(p).replace(/[\\\/]+$/, "") + "/autoimportcut_v3_copy_progress.json" : "";
     }
 
     function reset() {
@@ -474,16 +493,20 @@ var CopyMonitor = (function () {
     }
 
     function tick() {
-        if (typeof FastCopy !== "undefined" && FastCopy.isBusy()) return;
+        if ((typeof FastCopy !== "undefined" && FastCopy.isBusy()) ||
+            (typeof SidecarClient !== "undefined" && SidecarClient.isBusy && SidecarClient.isBusy()) ||
+            (typeof EnvatoDownloader !== "undefined" && EnvatoDownloader.isBusy && EnvatoDownloader.isBusy())) {
+            return;
+        }
 
         var st = readState();
         if (!st || st.state !== "copying" || !st.dest) {
-            // File vừa copy xong -> cộng dồn vào tổng đã copy của phiên
+            // Chỉ ẩn thanh tiến độ khi chính CopyMonitor vừa kết thúc 1 file (tránh gọi hideCopyProgress liên tục mỗi 200ms gây chớp giao diện)
             if (last.name !== "") {
                 state.copiedBytes += (last.fileTotal > 0 ? last.fileTotal : last.bytes);
                 last.name = "";
+                hideCopyProgress(false);
             }
-            hideCopyProgress();
             return;
         }
 
@@ -532,7 +555,7 @@ var CopyMonitor = (function () {
     function stop() {
         if (timer) { clearInterval(timer); timer = null; }
         reset();
-        hideCopyProgress();
+        hideCopyProgress(true);
     }
 
     /** Vì sao không hiện được % copy: "ok" | "no-fs" | "no-path" */
@@ -676,7 +699,7 @@ var FastCopy = (function () {
                     var elapsedSec = Math.max(0.05, (Date.now() - startTime) / 1000);
                     showCopyProgress(dstName, total, total, total / elapsedSec);
                     state.copiedBytes += total;
-                    setTimeout(hideCopyProgress, 60);
+                    hideCopyProgress(false);
                     cb({ ok: true, copied: true, bytes: total });
                 });
             } catch (eCp) {
@@ -755,7 +778,7 @@ var FastCopy = (function () {
                 var spd = lastSpeed > 0 ? lastSpeed : (total / elapsed);
                 showCopyProgress(dstName, total, total, spd);
                 state.copiedBytes += total;
-                setTimeout(hideCopyProgress, 60);
+                hideCopyProgress(false);
                 cb({ ok: true, copied: true, bytes: total });
             } else {
                 fallbackNodeCopy("robocopy exit=" + code);
@@ -831,7 +854,7 @@ var EnvatoDownloader = (function () {
         }
     } catch (e) {}
 
-    var DEBUG_PORT = 9295;
+    var DEBUG_PORT = 9296;
     var LS_ENVATO_AUTH = "autoimportcut_v2_envato_auth";
     var LS_ENVATO_USER = "autoimportcut_v2_envato_user";
     var loggedInState = false;
@@ -872,9 +895,15 @@ var EnvatoDownloader = (function () {
         var base = (typeof process !== "undefined" && process.env)
             ? (process.env.LOCALAPPDATA || process.env.APPDATA || "C:\\Temp")
             : "C:\\Temp";
-        var dir = nodePath.join(base, "AutoImportCutV2", "EnvatoBrowserProfile");
+        var dir = nodePath.join(base, "AutoImportCutV3", "EnvatoBrowserProfile");
         try {
-            if (!nodeFs.existsSync(dir)) nodeFs.mkdirSync(dir, { recursive: true });
+            if (!nodeFs.existsSync(dir)) {
+                nodeFs.mkdirSync(dir, { recursive: true });
+                var v2Dir = nodePath.join(base, "AutoImportCutV2", "EnvatoBrowserProfile");
+                if (nodeFs.existsSync(v2Dir) && nodeCp && typeof nodeCp.spawnSync === "function") {
+                    try { nodeCp.spawnSync("robocopy.exe", [v2Dir, dir, "/E", "/R:0", "/W:0", "/NFL", "/NDL", "/NJH", "/NJS"], { windowsHide: true, timeout: 8000 }); } catch (eCp) {}
+                }
+            }
         } catch (e) {}
         return dir;
     }
@@ -1874,12 +1903,29 @@ var EnvatoDownloader = (function () {
                                         state.copiedBytes += (finalSz > 0 ? finalSz : 0);
                                         lastDownloadFinishedAt = Date.now();
 
-                                        finishSingle({
-                                            ok: true,
-                                            cached: false,
-                                            filePath: destFull,
-                                            formatLabel: chosenFormatLabel,
-                                            bytes: finalSz
+                                        SidecarClient.convertVideoForPremiere(destFull, footageDir, false, function (cMsg) {
+                                            if (onStatus) onStatus("Envato [" + itemKey.substring(0, 8) + "] — " + cMsg);
+                                        }, function (cRes) {
+                                            if (cRes && cRes.ok && cRes.filePath && cRes.filePath !== destFull) {
+                                                destFull = cRes.filePath;
+                                                var newSaved = nodePath.basename(destFull);
+                                                saveCacheMap(footageDir, function (m) {
+                                                    m[url] = newSaved;
+                                                    m[itemKey] = newSaved;
+                                                    if (resolvedUuid) m[resolvedUuid] = newSaved;
+                                                });
+                                                state.envatoFiles[url] = destFull;
+                                                state.envatoFiles[itemKey] = destFull;
+                                                if (resolvedUuid) state.envatoFiles[resolvedUuid] = destFull;
+                                                if (cRes.converted) addLog("info", "Đã tự động convert codec Envato (" + (cRes.originalVideoCodec || "") + " → H.264 MP4): " + newSaved);
+                                            }
+                                            finishSingle({
+                                                ok: true,
+                                                cached: false,
+                                                filePath: destFull,
+                                                formatLabel: chosenFormatLabel,
+                                                bytes: finalSz
+                                            });
                                         });
                                         return;
                                     }
@@ -1973,6 +2019,7 @@ var EnvatoDownloader = (function () {
 
     return {
         isAvailable: isAvailable,
+        isBusy: function () { return !!(activeTimer || activeCdp); },
         isLoggedIn: function () { return loggedInState; },
         getLoggedInUser: function () { return loggedInUser; },
         getEnvatoItemKey: getEnvatoItemKey,
@@ -1999,6 +2046,399 @@ function updateEnvatoAuthUI() {
             : "Chưa đăng nhập Envato — bấm để mở trình duyệt Chrome đăng nhập tài khoản cá nhân";
     }
 }
+
+// ============================================================================
+// SIDECAR BACKEND CLIENT (V3 Architecture Option A)
+// Giao tiếp với tiến trình Node.js độc lập ngoài CEP (http://127.0.0.1:9395)
+// Chuyên trách: Tải YouTube tốc độ cao + Tự động kiểm tra & convert codec (AV1/VP9/WEBM/MKV) sang H.264 MP4 chuẩn Premiere
+// ============================================================================
+var SidecarClient = (function () {
+    var PORT = 9395;
+    var BASE_URL = 'http://127.0.0.1:' + PORT;
+    var nodeFs = null, nodePath = null, nodeCp = null, nodeHttp = null;
+    try {
+        var req = (typeof require === 'function') ? require :
+                  (window.cep_node && window.cep_node.require ? window.cep_node.require : null);
+        if (req) {
+            nodeFs = req('fs');
+            nodePath = req('path');
+            nodeCp = req('child_process');
+            nodeHttp = req('http');
+        }
+    } catch (e) {}
+
+    var isOnline = false;
+    var starting = false;
+    var cancelled = false;
+    var activePollTimer = null;
+
+    function updateBadge(online, label) {
+        isOnline = !!online;
+        var dot = document.getElementById('sidecarDot');
+        var txt = document.getElementById('sidecarText');
+        var badge = document.getElementById('sidecarBadge');
+        if (dot) dot.className = 'api-dot' + (online ? ' active' : ' warning');
+        if (txt) txt.textContent = label || (online ? 'Sidecar ✓' : 'Sidecar');
+        if (badge) {
+            badge.title = online
+                ? 'Sidecar Pro Backend đang chạy (127.0.0.1:' + PORT + ') — Tự động tải YouTube & convert mọi codec lạ sang H.264 MP4'
+                : 'Sidecar Pro Backend đang khởi động...';
+        }
+    }
+
+    function httpReq(method, pathUrl, bodyObj, cb) {
+        if (!nodeHttp) {
+            fetch(BASE_URL + pathUrl, {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: bodyObj ? JSON.stringify(bodyObj) : undefined
+            }).then(function (r) { return r.json(); }).then(function (d) { cb(null, d); }).catch(function (e) { cb(e, null); });
+            return;
+        }
+        var payload = bodyObj ? Buffer.from(JSON.stringify(bodyObj), 'utf8') : null;
+        var req = nodeHttp.request({
+            hostname: '127.0.0.1',
+            port: PORT,
+            path: pathUrl,
+            method: method,
+            headers: payload ? { 'Content-Type': 'application/json', 'Content-Length': payload.length } : {},
+            timeout: 15000
+        }, function (res) {
+            var raw = '';
+            res.on('data', function (c) { raw += c.toString(); });
+            res.on('end', function () {
+                try { cb(null, JSON.parse(raw)); } catch (eP) { cb(eP, null); }
+            });
+        });
+        req.on('error', function (err) { cb(err, null); });
+        req.on('timeout', function () { try { req.destroy(); } catch (e) {} cb(new Error('timeout'), null); });
+        if (payload) req.write(payload);
+        req.end();
+    }
+
+    function findNodeExe() {
+        if (!nodeFs) return '';
+        var cands = [
+            'C:\\Program Files\\nodejs\\node.exe',
+            'C:\\Program Files\\Adobe\\Adobe Creative Cloud Experience\\libs\\node.exe',
+            'C:\\Program Files (x86)\\Adobe\\Adobe Creative Cloud Experience\\libs\\node.exe'
+        ];
+        for (var i = 0; i < cands.length; i++) {
+            if (nodeFs.existsSync(cands[i])) return cands[i];
+        }
+        return 'node.exe';
+    }
+
+    function findServerScript() {
+        if (!nodeFs || !nodePath) return '';
+        try {
+            var extRoot = String(csInterface.getSystemPath(SystemPath.EXTENSION) || '');
+            if (extRoot.indexOf('file:///') === 0) {
+                extRoot = extRoot.substring(8);
+            } else if (extRoot.indexOf('file://') === 0) {
+                extRoot = extRoot.substring(7);
+            }
+            if (extRoot) {
+                var winExt = extRoot.replace(/\//g, '\\');
+                var c1 = nodePath.join(winExt, 'backend', 'server.js');
+                if (nodeFs.existsSync(c1)) return c1;
+                var c2 = nodePath.join(nodePath.dirname(winExt), 'backend', 'server.js');
+                if (nodeFs.existsSync(c2)) return c2;
+            }
+        } catch (e) {}
+        var fallback = 'c:\\Users\\admin\\Desktop\\Auto import & cut V3\\backend\\server.js';
+        if (nodeFs.existsSync(fallback)) return fallback;
+        return '';
+    }
+
+    var inProcessLoaded = false;
+    function startInProcessFallback(srvScript) {
+        if (inProcessLoaded || !srvScript) return;
+        try {
+            var reqFn = (typeof require === 'function') ? require :
+                        (window.cep_node && window.cep_node.require ? window.cep_node.require : null);
+            if (reqFn) {
+                inProcessLoaded = true;
+                reqFn(srvScript);
+            }
+        } catch (eInProc) {}
+    }
+
+    function ensureRunning(cb) {
+        httpReq('GET', '/health', null, function (err, data) {
+            if (!err && data && data.ok) {
+                updateBadge(true, 'Sidecar ✓');
+                if (cb) cb(true, data);
+                return;
+            }
+            if (starting) {
+                setTimeout(function () { ensureRunning(cb); }, 500);
+                return;
+            }
+            starting = true;
+            updateBadge(false, 'Sidecar…');
+            var nodeExe = findNodeExe();
+            var srvScript = findServerScript();
+            if (nodeCp && nodeExe && srvScript) {
+                try {
+                    var child = nodeCp.spawn(nodeExe, [srvScript], {
+                        detached: true,
+                        stdio: 'ignore',
+                        windowsHide: true
+                    });
+                    if (child && typeof child.unref === 'function') child.unref();
+                } catch (eSp) {
+                    startInProcessFallback(srvScript);
+                }
+            } else if (srvScript) {
+                startInProcessFallback(srvScript);
+            }
+            var tries = 0;
+            function waitHealth() {
+                tries++;
+                if (tries === 3 && srvScript) {
+                    // Nếu máy người dùng (ví dụ nâng cấp OTA từ V2) không cài Node.js rời bên ngoài,
+                    // tự động nạp server.js ngay trên nhân Node.js tích hợp sẵn của CEP!
+                    startInProcessFallback(srvScript);
+                }
+                httpReq('GET', '/health', null, function (e2, d2) {
+                    if (!e2 && d2 && d2.ok) {
+                        starting = false;
+                        updateBadge(true, 'Sidecar ✓');
+                        if (cb) cb(true, d2);
+                        return;
+                    }
+                    if (tries >= 12) {
+                        starting = false;
+                        updateBadge(false, 'Sidecar ✗');
+                        if (cb) cb(false, null);
+                        return;
+                    }
+                    setTimeout(waitHealth, 400);
+                });
+            }
+            setTimeout(waitHealth, 350);
+        });
+    }
+
+    function pollJob(jobId, displayLabel, onStatus, cb) {
+        if (activePollTimer) { clearTimeout(activePollTimer); activePollTimer = null; }
+        function tick() {
+            if (cancelled || state.shouldCancel) {
+                httpReq('POST', '/cancel', {}, function () {});
+                hideCopyProgress();
+                cb({ ok: false, cancelled: true, error: 'Đã huỷ' });
+                return;
+            }
+            httpReq('GET', '/job?id=' + encodeURIComponent(jobId), null, function (err, res) {
+                if (err || !res || !res.ok || !res.job) {
+                    activePollTimer = setTimeout(tick, 400);
+                    return;
+                }
+                var j = res.job;
+                if (onStatus && j.message) onStatus(j.message);
+                var pct = Math.max(0, Math.min(100, Number(j.percent) || 0));
+                var realTotal = j.totalBytes > 0 ? j.totalBytes : 0;
+                var realDone = j.downloadedBytes || j.bytesDone || (realTotal > 0 ? Math.round(realTotal * pct / 100) : 0);
+                showCopyProgress(displayLabel + (j.stage === 'convert' ? ' [Convert H.264]' : ''), realDone, realTotal, j.speedBps || 0, pct);
+                if (j.status === 'done') {
+                    activePollTimer = null;
+                    hideCopyProgress(false);
+                    cb(j.result || { ok: true, filePath: j.destPath });
+                    return;
+                }
+                if (j.status === 'error' || j.status === 'cancelled') {
+                    activePollTimer = null;
+                    hideCopyProgress(false);
+                    cb({ ok: false, cancelled: j.status === 'cancelled', error: j.error || 'Lỗi xử lý trên Sidecar' });
+                    return;
+                }
+                activePollTimer = setTimeout(tick, 300);
+            });
+        }
+        tick();
+    }
+
+    function downloadYouTubeSingle(item, footageDir, onStatus, cb) {
+        ensureRunning(function (online) {
+            if (!online) {
+                cb({ ok: false, error: 'Sidecar Backend chưa khởi động được' });
+                return;
+            }
+            httpReq('POST', '/start-youtube', {
+                url: item.url,
+                id: item.id,
+                destPath: item.destPath,
+                footageDir: footageDir
+            }, function (err, res) {
+                if (err || !res || !res.ok || !res.jobId) {
+                    cb({ ok: false, error: (res && res.error) ? res.error : 'Không tạo được tác vụ tải YouTube' });
+                    return;
+                }
+                pollJob(res.jobId, 'YouTube [' + (item.id || '') + ']', onStatus, cb);
+            });
+        });
+    }
+
+    function downloadYouTubeBatch(items, footageDir, onStep, cb) {
+        cancelled = false;
+        var idx = 0, downloadedCount = 0, errors = [];
+        function next() {
+            if (cancelled || state.shouldCancel) {
+                cb({ ok: false, cancelled: true, downloadedCount: downloadedCount, errors: errors });
+                return;
+            }
+            if (idx >= items.length) {
+                cb({ ok: true, downloadedCount: downloadedCount, errors: errors });
+                return;
+            }
+            var item = items[idx];
+            downloadYouTubeSingle(item, footageDir, function (msg) {
+                if (onStep) onStep(item, idx, items.length, msg);
+            }, function (res) {
+                if (res.cancelled) {
+                    cb({ ok: false, cancelled: true, downloadedCount: downloadedCount, errors: errors });
+                    return;
+                }
+                if (!res.ok) {
+                    errors.push((item.id || item.url) + ': ' + res.error);
+                    addLog('warning', 'YouTube [' + (item.id || '') + ']: ' + res.error);
+                } else {
+                    if (!res.cached) {
+                        downloadedCount++;
+                        var convNote = res.converted ? (' · Đã tự động convert codec ' + (res.originalVideoCodec || '') + ' → H.264 MP4') : '';
+                        addLog('success', 'Đã tải YouTube [' + (item.id || '') + '] → yt_' + item.id + '.mp4' + convNote);
+                    }
+                }
+                idx++;
+                next();
+            });
+        }
+        next();
+    }
+
+    function convertVideoForPremiere(filePath, footageDir, forceTranscode, onStatus, cb) {
+        cancelled = false;
+        ensureRunning(function (online) {
+            if (!online) {
+                cb({ ok: false, error: 'Sidecar Backend chưa khởi động được' });
+                return;
+            }
+            var baseName = nodePath ? nodePath.basename(filePath) : String(filePath).split(/[\\/]/).pop();
+            httpReq('POST', '/start-convert', {
+                filePath: filePath,
+                footageDir: footageDir,
+                forceTranscode: !!forceTranscode
+            }, function (err, res) {
+                if (err || !res || !res.ok || !res.jobId) {
+                    cb({ ok: false, error: (res && res.error) ? res.error : 'Không tạo được tác vụ convert codec' });
+                    return;
+                }
+                pollJob(res.jobId, baseName, onStatus, function (convRes) {
+                    if (convRes && convRes.ok && convRes.filePath) {
+                        var normOrig = String(filePath).replace(/\\/g, '/').toLowerCase();
+                        state.convertedFiles[normOrig] = convRes.filePath;
+                        state.convertedFiles[filePath] = convRes.filePath;
+                    }
+                    cb(convRes);
+                });
+            });
+        });
+    }
+
+    function trimCopySingle(item, footageDir, onStatus, cb) {
+        ensureRunning(function (online) {
+            if (!online) {
+                cb({ ok: false, error: 'Sidecar Backend chưa khởi động được' });
+                return;
+            }
+            var baseName = item.name || (nodePath ? nodePath.basename(item.srcPath) : String(item.srcPath).split(/[\\/]/).pop());
+            httpReq('POST', '/start-trim-copy', {
+                trimKey: item.trimKey || '',
+                srcPath: item.srcPath,
+                footageDir: footageDir,
+                padSec: (typeof item.padSec === 'number') ? item.padSec : 10,
+                rangeSpec: item.rangeSpec || {}
+            }, function (err, res) {
+                if (err || !res || !res.ok || !res.jobId) {
+                    cb({ ok: false, error: (res && res.error) ? res.error : 'Không tạo được tác vụ cắt gọn file nặng' });
+                    return;
+                }
+                pollJob(res.jobId, '✂️ Cắt gọn ' + baseName, onStatus, function (trimRes) {
+                    if (trimRes && trimRes.ok && trimRes.filePath) {
+                        if (item.trimKey) {
+                            state.trimmedFiles[item.trimKey] = trimRes;
+                        }
+                        if (!trimRes.cached && trimRes.bytes > 0) {
+                            state.copiedBytes += trimRes.bytes;
+                        }
+                    }
+                    cb(trimRes);
+                });
+            });
+        });
+    }
+
+    function trimCopyBatch(items, footageDir, onStep, cb) {
+        cancelled = false;
+        var idx = 0, copiedCount = 0, errors = [];
+        function next() {
+            if (cancelled || state.shouldCancel) {
+                cb({ ok: false, cancelled: true, copiedCount: copiedCount, errors: errors });
+                return;
+            }
+            if (idx >= items.length) {
+                cb({ ok: true, copiedCount: copiedCount, errors: errors });
+                return;
+            }
+            var item = items[idx];
+            trimCopySingle(item, footageDir, function (msg) {
+                if (onStep) onStep(item, idx, items.length, msg);
+            }, function (res) {
+                if (res && res.cancelled) {
+                    cb({ ok: false, cancelled: true, copiedCount: copiedCount, errors: errors });
+                    return;
+                }
+                if (!res || !res.ok) {
+                    var errMsg = (res && res.error) ? res.error : 'Lỗi cắt gọn file nặng';
+                    errors.push((item.name || item.srcPath) + ': ' + errMsg);
+                    addLog('warning', 'Cắt gọn file nặng [' + (item.name || '') + '] thất bại: ' + errMsg + ' → sẽ dùng cách copy thường');
+                } else {
+                    var outName = nodePath ? nodePath.basename(res.filePath) : String(res.filePath).split(/[\\/]/).pop();
+                    var savedMB = res.bytes ? (Math.round(res.bytes / 1048576 * 10) / 10 + ' MB') : '';
+                    var origGB = item.sizeBytes ? (Math.round(item.sizeBytes / 1073741824 * 100) / 100 + ' GB') : '';
+                    if (!res.cached) {
+                        copiedCount++;
+                        addLog('success', '✂️ Đã copy cắt gọn (' + origGB + ' → ' + savedMB + ', ±' + (res.padSec !== undefined ? res.padSec : 10) + 's): ' + outName);
+                    } else {
+                        addLog('info', '✂️ Dùng lại đoạn cắt gọn đã có trong Footage/: ' + outName);
+                    }
+                }
+                idx++;
+                next();
+            });
+        }
+        next();
+    }
+
+    function cancel() {
+        cancelled = true;
+        if (activePollTimer) { clearTimeout(activePollTimer); activePollTimer = null; }
+        httpReq('POST', '/cancel', {}, function () {});
+        hideCopyProgress();
+    }
+
+    return {
+        ensureRunning: ensureRunning,
+        isBusy: function () { return !!activePollTimer; },
+        isOnline: function () { return isOnline; },
+        downloadYouTubeBatch: downloadYouTubeBatch,
+        convertVideoForPremiere: convertVideoForPremiere,
+        trimCopySingle: trimCopySingle,
+        trimCopyBatch: trimCopyBatch,
+        cancel: cancel
+    };
+})();
 
 /**
  * Lấy đường dẫn thư mục temp của Premiere — nơi hostscript.jsx ghi file báo tiến độ copy.
@@ -2045,19 +2485,46 @@ function formatEta(seconds) {
     return "còn ~" + Math.floor(m / 60) + "h" + (m % 60) + "p";
 }
 
-function showCopyProgress(name, bytes, total, speedBytesPerSec) {
-    if (!dom.copyProgressRow) return;
-    dom.copyProgressRow.classList.add("visible");
-    if (dom.copyFileName) dom.copyFileName.textContent = "📄 " + name;
-    if (dom.copySpeed) dom.copySpeed.textContent = (speedBytesPerSec > 0 ? (speedBytesPerSec / 1048576).toFixed(1) : "0.0") + " MB/s";
+var _hideCopyTimer = null;
 
-    // --- File đang copy ---
-    var percent = (total > 0) ? Math.min(100, Math.round((bytes / total) * 100)) : 0;
-    if (dom.copyBarFill) dom.copyBarFill.style.width = percent + "%";
+function showCopyProgress(name, bytes, total, speedBytesPerSec, overridePercent) {
+    if (_hideCopyTimer) {
+        clearTimeout(_hideCopyTimer);
+        _hideCopyTimer = null;
+    }
+    if (!dom.copyProgressRow) return;
+    if (!dom.copyProgressRow.classList.contains("visible")) {
+        dom.copyProgressRow.classList.add("visible");
+    }
+    var fileLabel = "📄 " + name;
+    if (dom.copyFileName && dom.copyFileName.textContent !== fileLabel) {
+        dom.copyFileName.textContent = fileLabel;
+    }
+    var spdText = (speedBytesPerSec > 0 ? (speedBytesPerSec / 1048576).toFixed(1) : "0.0") + " MB/s";
+    if (dom.copySpeed && dom.copySpeed.textContent !== spdText) {
+        dom.copySpeed.textContent = spdText;
+    }
+
+    // --- File đang copy / cắt gọn ---
+    var percent = (total > 0)
+        ? Math.min(100, Math.round((bytes / total) * 100))
+        : ((typeof overridePercent === "number" && overridePercent >= 0) ? Math.min(100, Math.round(overridePercent)) : 0);
+    var widthStr = percent + "%";
+    if (dom.copyBarFill && dom.copyBarFill.style.width !== widthStr) {
+        dom.copyBarFill.style.width = widthStr;
+    }
     if (dom.copyBytes) {
-        dom.copyBytes.textContent = (total > 0)
-            ? (formatBytes(bytes) + " / " + formatBytes(total) + " · " + percent + "%")
-            : ("Đã copy " + formatBytes(bytes));
+        var bytesText;
+        if (total > 0) {
+            bytesText = formatBytes(bytes) + " / " + formatBytes(total) + " · " + percent + "%";
+        } else if (typeof overridePercent === "number" && overridePercent >= 0) {
+            bytesText = (bytes > 0 ? ("Đã xử lý " + formatBytes(bytes) + " · ") : "") + percent + "%";
+        } else {
+            bytesText = "Đã copy " + formatBytes(bytes);
+        }
+        if (dom.copyBytes.textContent !== bytesText) {
+            dom.copyBytes.textContent = bytesText;
+        }
     }
 
     // --- Tổng tiến độ theo thời gian thực ---
@@ -2067,21 +2534,41 @@ function showCopyProgress(name, bytes, total, speedBytesPerSec) {
         var doneBytes = Math.min(plan.totalBytes, plan.doneBytes + bytes);
         var totalPercent = Math.min(100, Math.round((doneBytes / plan.totalBytes) * 100));
         var eta = (speedBytesPerSec > 1024) ? formatEta((plan.totalBytes - doneBytes) / speedBytesPerSec) : "";
-        dom.copyTotal.textContent = "Tổng: " + formatBytes(doneBytes) + " / " + formatBytes(plan.totalBytes) +
-                                    " · " + totalPercent + "%" + (eta ? (" · " + eta) : "");
-        // Thanh tiến độ chính chạy theo dung lượng thật, không nhảy theo số file
+        var totTxt = "Tổng: " + formatBytes(doneBytes) + " / " + formatBytes(plan.totalBytes) +
+                     " · " + totalPercent + "%" + (eta ? (" · " + eta) : "");
+        if (dom.copyTotal.textContent !== totTxt) dom.copyTotal.textContent = totTxt;
         if (dom.progressBarFill) dom.progressBarFill.style.width = totalPercent + "%";
         if (dom.progressPercent) dom.progressPercent.textContent = totalPercent + "%";
     } else {
         var sessionBytes = state.copiedBytes + bytes;
-        dom.copyTotal.textContent = "Tổng đã copy trong phiên: " + formatBytes(sessionBytes);
+        var sessTxt = "Tổng đã copy trong phiên: " + formatBytes(sessionBytes);
+        if (dom.copyTotal.textContent !== sessTxt) dom.copyTotal.textContent = sessTxt;
     }
 }
 
-function hideCopyProgress() {
+function hideCopyProgress(immediate) {
+    if (_hideCopyTimer) {
+        clearTimeout(_hideCopyTimer);
+        _hideCopyTimer = null;
+    }
     if (!dom.copyProgressRow) return;
-    dom.copyProgressRow.classList.remove("visible");
-    if (dom.copyBarFill) dom.copyBarFill.style.width = "0%";
+    if (immediate === true || (!state.isRunning && !state.relink)) {
+        dom.copyProgressRow.classList.remove("visible");
+        if (dom.copyBarFill) dom.copyBarFill.style.width = "0%";
+        return;
+    }
+    // Khi đang trong luồng cắt / relink nhiều dòng liên tiếp, giữ khung tiến độ ổn định 1.2s
+    // để không bị đóng/mở giật cục (chớp 1 frame cắt / 1 frame tiến độ) giữa các dòng.
+    _hideCopyTimer = setTimeout(function () {
+        _hideCopyTimer = null;
+        if ((typeof FastCopy !== "undefined" && FastCopy.isBusy()) ||
+            (typeof SidecarClient !== "undefined" && SidecarClient.isBusy && SidecarClient.isBusy()) ||
+            (typeof EnvatoDownloader !== "undefined" && EnvatoDownloader.isBusy && EnvatoDownloader.isBusy())) {
+            return;
+        }
+        dom.copyProgressRow.classList.remove("visible");
+        if (dom.copyBarFill) dom.copyBarFill.style.width = "0%";
+    }, 1200);
 }
 
 // =========================================================================
@@ -2237,6 +2724,8 @@ window.addEventListener("DOMContentLoaded", function () {
     setupAI();
     setupChangelog();
     updateEnvatoAuthUI();
+    SidecarClient.ensureRunning();
+    setInterval(function () { SidecarClient.ensureRunning(); }, 10000);
     updateLogVisibility();
     setInterval(checkPremiereEnvironment, 5000);
 
@@ -2304,8 +2793,11 @@ function setUpdateStatus(text, isError) {
 }
 
 // Ghi lại phiên bản vừa cập nhật, để sau khi panel nạp lại thì biết mà báo kết quả.
-var LS_UPDATED_TO = "autoimportcut_v2_updated_to";
-var LS_UPDATE_HOSTMSG = "autoimportcut_v2_update_hostmsg";  // lý do nạp lại script thất bại
+// Hỗ trợ nhận cả cờ từ bản V2 khi người dùng nâng cấp OTA trực tiếp từ V2 -> V3.
+var LS_UPDATED_TO = "autoimportcut_v3_updated_to";
+var LS_UPDATE_HOSTMSG = "autoimportcut_v3_update_hostmsg";  // lý do nạp lại script thất bại
+var LS_V2_UPDATED_TO = "autoimportcut_v2_updated_to";
+var LS_V2_UPDATE_HOSTMSG = "autoimportcut_v2_update_hostmsg";
 
 /**
  * Chạy ngay khi mở panel: nếu lần trước vừa cập nhật thì báo kết quả.
@@ -2316,12 +2808,14 @@ var LS_UPDATE_HOSTMSG = "autoimportcut_v2_update_hostmsg";  // lý do nạp lạ
 function reportUpdateResult() {
     var flag = null;
     try {
-        flag = localStorage.getItem(LS_UPDATED_TO);
+        flag = localStorage.getItem(LS_UPDATED_TO) || localStorage.getItem(LS_V2_UPDATED_TO);
     } catch (e) { return false; }
     if (!flag) return false;
     try {
         localStorage.removeItem(LS_UPDATED_TO);
         localStorage.removeItem(LS_UPDATE_HOSTMSG);
+        localStorage.removeItem(LS_V2_UPDATED_TO);
+        localStorage.removeItem(LS_V2_UPDATE_HOSTMSG);
     } catch (e2) {}
 
     if (flag !== APP_VERSION) {
@@ -2359,7 +2853,7 @@ function reportUpdateResult() {
  * Gọi ở đây thì không còn lần nạp lại nào phía sau để đè lên nữa.
  */
 function syncHostScript(cb) {
-    var probe = "(function(){ try { return ((typeof IMPORTCUT_VERSION !== 'undefined') ? IMPORTCUT_VERSION : '') + '|' + (typeof resolveSourceFileOnly === 'function' ? '1' : '0') + '|' + (typeof findCachedEnvatoFile === 'function' ? '1' : '0'); } catch(e) { return ''; } })()";
+    var probe = "(function(){ try { return (($.global.AIC_V3 && $.global.AIC_V3.IMPORTCUT_VERSION) ? $.global.AIC_V3.IMPORTCUT_VERSION : '') + '|' + (typeof resolveSourceFileOnly === 'function' ? '1' : '0') + '|' + (typeof findCachedEnvatoFile === 'function' ? '1' : '0'); } catch(e) { return ''; } })()";
     csInterface.evalScript(probe, function (b) {
         var raw = String(b === undefined || b === null ? "" : b).replace(/^"|"$/g, "");
         var parts = raw.split("|");
@@ -2485,6 +2979,14 @@ function setEnvStatus(type, title, subtitle) {
 function setupEventListeners() {
     dom.btnLoadCheck.addEventListener("click", handleLoadCheckButton);
     dom.chkTram.checked = true;
+    if (dom.txtSingleTimeAfterSec && dom.radioSingleAfter) {
+        dom.txtSingleTimeAfterSec.addEventListener("focus", function () { dom.radioSingleAfter.checked = true; });
+        dom.txtSingleTimeAfterSec.addEventListener("input", function () { dom.radioSingleAfter.checked = true; });
+    }
+    if (dom.txtSingleTimeSec && dom.radioSingleBefore) {
+        dom.txtSingleTimeSec.addEventListener("focus", function () { dom.radioSingleBefore.checked = true; });
+        dom.txtSingleTimeSec.addEventListener("input", function () { dom.radioSingleBefore.checked = true; });
+    }
     dom.btnStart.addEventListener("click", function () {
         if (state.scriptValidated) startImportProcess();
     });
@@ -3365,6 +3867,7 @@ function startImportProcessCore() {
     state.shouldCancel = false;
     state.currentRowIdx = 0;
     state.aiClipNames = {};
+    state.trimmedFiles = {};
     resetStats();
 
     // Nut 2 o lai cho cu nhung khoa lai va doi chu - truoc day no bi AN DI va thay
@@ -3379,11 +3882,15 @@ function startImportProcessCore() {
         mainTrackIndex: 0,
         tramTrackIndex: 1,
         enableCopyToLocal: dom.chkCopy.checked,
+        smartTrimCopy: dom.chkSmartTrimCopy ? dom.chkSmartTrimCopy.checked : true,
+        trimThresholdGB: parseFloat(dom.txtTrimThresholdGB ? dom.txtTrimThresholdGB.value : 1) || 1,
+        trimPadSec: (dom.txtTrimPadSec && dom.txtTrimPadSec.value !== "" && !isNaN(parseFloat(dom.txtTrimPadSec.value))) ? Math.max(0, parseFloat(dom.txtTrimPadSec.value)) : 10,
         enableTram: true,
         enableLabel: dom.chkLabel.checked,
         defaultDuration: parseFloat(dom.txtDefaultSec.value) || 5,
         singleTimeEnabled: dom.chkSingleTime.checked,
-        singleTimeDuration: parseFloat(dom.txtSingleTimeSec.value) || 5,
+        singleTimeMode: (dom.radioSingleBefore && dom.radioSingleBefore.checked) ? "before" : "after",
+        singleTimeDuration: parseFloat((dom.radioSingleBefore && dom.radioSingleBefore.checked) ? dom.txtSingleTimeSec.value : (dom.txtSingleTimeAfterSec ? dom.txtSingleTimeAfterSec.value : dom.txtSingleTimeSec.value)) || 5,
         noTimecodeMode: dom.radioFullVideo.checked ? "full" : "center",
         noTimecodeDuration: parseFloat(dom.txtCenterTimeSec.value) || 5,
         folderRandomCount: parseInt(dom.txtFolderRandomCount ? dom.txtFolderRandomCount.value : 3, 10) || 3,
@@ -3444,7 +3951,10 @@ function startImportProcessCore() {
     });
 }
 
-function buildRowEvalScript(actualDataIndex, rowNumber, deferCopy, preCopiedCount, deferEnvato, preDownloadedCount) {
+function buildRowEvalScript(actualDataIndex, rowNumber, deferCopy, preCopiedCount, deferEnvato, preDownloadedCount, deferYouTube, allowConvertRetry, deferTrimCopy) {
+    if (deferYouTube === undefined) deferYouTube = true;
+    if (allowConvertRetry === undefined) allowConvertRetry = true;
+    if (deferTrimCopy === undefined) deferTrimCopy = true;
     return "(function(){ " +
         "var rows = (_session && _session.csvRows) ? _session.csvRows : parseCSV(" + toEscapedJson(state.csvContent) + "); " +
         "var cols = " + toEscapedJson(_sessionCols()) + "; " +
@@ -3462,10 +3972,15 @@ function buildRowEvalScript(actualDataIndex, rowNumber, deferCopy, preCopiedCoun
         "   tramTime: (cols.tramTimeCol!==-1 ? r[cols.tramTimeCol] : ''), " +
         "   labelOverride: " + toEscapedJson(state.aiClipNames[String(rowNumber)] || "") + ", " +
         "   deferCopy: " + (deferCopy ? "true" : "false") + ", " +
+        "   deferTrimCopy: " + (deferTrimCopy ? "true" : "false") + ", " +
         "   preCopiedCount: " + (preCopiedCount || 0) + ", " +
         "   deferEnvato: " + (deferEnvato ? "true" : "false") + ", " +
+        "   deferYouTube: " + (deferYouTube ? "true" : "false") + ", " +
+        "   allowConvertRetry: " + (allowConvertRetry ? "true" : "false") + ", " +
         "   preDownloadedCount: " + (preDownloadedCount || 0) + ", " +
-        "   envatoFiles: " + JSON.stringify(state.envatoFiles || {}) + " " +
+        "   envatoFiles: " + JSON.stringify(state.envatoFiles || {}) + ", " +
+        "   convertedFiles: " + JSON.stringify(state.convertedFiles || {}) + ", " +
+        "   trimmedFiles: " + JSON.stringify(state.trimmedFiles || {}) + " " +
         "}; " +
         "return cep_processSingleRow(toJson(data)); " +
     "})()";
@@ -3540,6 +4055,69 @@ function processNextRow() {
             return;
         }
 
+        // Bước 1B (Sidecar Pro V3): Tải YouTube tốc độ cao + tự động convert codec AV1/VP9 sang H.264 MP4
+        if (result && result.status === "need_youtube_download" && result.downloads && result.downloads.length > 0) {
+            var ytDir = result.footageDir || state.footageFolderPath;
+            SidecarClient.downloadYouTubeBatch(result.downloads, ytDir, function (item, idx, total, statusMsg) {
+                dom.currentActionText.textContent = "Dòng " + rowNumber + " (" + (idx + 1) + "/" + total + ") — " + statusMsg;
+            }, function (ytRes) {
+                if (ytRes.cancelled || state.shouldCancel) {
+                    finishProcess("Đã dừng bởi người dùng");
+                    return;
+                }
+                var totalDl = (preDownloadedCount || 0) + (ytRes.downloadedCount || 0);
+                dom.currentActionText.textContent = "Đang import & cắt video YouTube dòng " + rowNumber + "...";
+                var afterYtScript = buildRowEvalScript(actualDataIndex, rowNumber, useFastCopy, 0, false, totalDl, false, true);
+                csInterface.evalScript(afterYtScript, function (resStrAfterYt) {
+                    handleEvalResult(resStrAfterYt, totalDl);
+                });
+            });
+            return;
+        }
+
+        // Bước 1C (Sidecar Pro V3): Nếu Premiere từ chối import vì codec lạ (AV1, VP9, HEVC 10-bit, MKV, WEBM...), tự động convert sang H.264 MP4
+        if (result && result.status === "need_codec_convert" && result.filePath) {
+            var convDir = result.footageDir || state.footageFolderPath;
+            addLog("info", "Dòng " + rowNumber + ": Phát hiện video có codec Premiere không hỗ trợ → Sidecar đang tự động convert sang H.264 MP4...");
+            SidecarClient.convertVideoForPremiere(result.filePath, convDir, true, function (cMsg) {
+                dom.currentActionText.textContent = "Dòng " + rowNumber + " — " + cMsg;
+            }, function (convRes) {
+                if (convRes && convRes.cancelled || state.shouldCancel) {
+                    finishProcess("Đã dừng bởi người dùng");
+                    return;
+                }
+                if (convRes && convRes.ok && convRes.filePath) {
+                    addLog("success", "Dòng " + rowNumber + ": Đã convert codec thành công → " + convRes.filePath.split(/[\\/]/).pop());
+                } else {
+                    addLog("warning", "Dòng " + rowNumber + ": Convert codec thất bại (" + ((convRes && convRes.error) || "Lỗi FFmpeg") + ")");
+                }
+                var retryScript = buildRowEvalScript(actualDataIndex, rowNumber, false, 0, false, preDownloadedCount || 0, false, false);
+                csInterface.evalScript(retryScript, function (resAfterConv) {
+                    handleEvalResult(resAfterConv, preDownloadedCount || 0);
+                });
+            });
+            return;
+        }
+
+        // Bước 2A (Sidecar Pro V3): Nếu dòng này có file nặng > X GB cần copy cắt gọn theo Timecode ± Y giây
+        if (result && result.status === "need_trim_copy" && result.trims && result.trims.length > 0) {
+            var trimDir = result.footageDir || state.footageFolderPath;
+            SidecarClient.trimCopyBatch(result.trims, trimDir, function (item, idx, total, statusMsg) {
+                dom.currentActionText.textContent = "Dòng " + rowNumber + " (" + (idx + 1) + "/" + total + ") — " + statusMsg;
+            }, function (trimRes) {
+                if (trimRes.cancelled || state.shouldCancel) {
+                    finishProcess("Đã dừng bởi người dùng");
+                    return;
+                }
+                dom.currentActionText.textContent = "Đang chèn clip cắt gọn dòng " + rowNumber + "...";
+                var afterTrimScript = buildRowEvalScript(actualDataIndex, rowNumber, useFastCopy, trimRes.copiedCount || 0, false, preDownloadedCount || 0, false, true, false);
+                csInterface.evalScript(afterTrimScript, function (resStrAfterTrim) {
+                    handleEvalResult(resStrAfterTrim, preDownloadedCount || 0);
+                });
+            });
+            return;
+        }
+
         // Bước 2: Nếu dòng này có file local cần copy về Footage/, dùng FastCopy (Node.js robocopy)
         if (result && result.status === "need_copy" && result.copies && result.copies.length > 0) {
             FastCopy.copyBatch(result.copies, function (item, idx, total) {
@@ -3551,18 +4129,9 @@ function processNextRow() {
                     return;
                 }
                 dom.currentActionText.textContent = "Đang chèn clip dòng " + rowNumber + "...";
-                var cutScript = buildRowEvalScript(actualDataIndex, rowNumber, false, batchRes.copiedCount || 0, false, preDownloadedCount || 0);
+                var cutScript = buildRowEvalScript(actualDataIndex, rowNumber, false, batchRes.copiedCount || 0, false, preDownloadedCount || 0, false, true);
                 csInterface.evalScript(cutScript, function (resStr2) {
-                    try {
-                        var result2 = JSON.parse(resStr2);
-                        handleRowResult(rowNumber, result2);
-                    } catch (e2) {
-                        addLog("error", "Dòng " + rowNumber + ": Lỗi xử lý - " + e2.toString());
-                        state.stats.error++;
-                    }
-                    updateStatsUI();
-                    state.currentRowIdx++;
-                    setTimeout(processNextRow, 20);
+                    handleEvalResult(resStr2, preDownloadedCount || 0);
                 });
             });
             return;
@@ -3657,6 +4226,7 @@ function cancelCurrentProcess() {
         state.shouldCancel = true;
         FastCopy.cancel();
         EnvatoDownloader.cancel();
+        SidecarClient.cancel();
         markStopping("Đang dừng — đợi xong thao tác hiện tại…");
         addLog("info", "Đã yêu cầu dừng Import & Cắt.");
         return;
@@ -3684,6 +4254,7 @@ function finishProcess(message) {
     state.isRunning = false;
     FastCopy.cancel();
     EnvatoDownloader.cancel();
+    SidecarClient.cancel();
     CopyMonitor.stop();
     csInterface.evalScript("cep_finishSession()", function () {});
 
@@ -3896,7 +4467,12 @@ function runCopyAndRelink() {
             return;
         }
 
-        var config = { footageFolderName: "Footage" };
+        var config = {
+            footageFolderName: "Footage",
+            smartTrimCopy: dom.chkSmartTrimCopy ? dom.chkSmartTrimCopy.checked : true,
+            trimThresholdGB: parseFloat(dom.txtTrimThresholdGB ? dom.txtTrimThresholdGB.value : 1) || 1,
+            trimPadSec: (dom.txtTrimPadSec && dom.txtTrimPadSec.value !== "" && !isNaN(parseFloat(dom.txtTrimPadSec.value))) ? Math.max(0, parseFloat(dom.txtTrimPadSec.value)) : 10
+        };
         evalJson("cep_scanTimelineSources(" + toEscapedJson(JSON.stringify(config)) + ")", function (res, err) {
             if (err) {
                 setRelinkBusy(false);
@@ -3986,12 +4562,13 @@ function relinkNextFile() {
     dom.currentActionText.textContent = "Đang copy: " + f.name + (f.sizeMB ? " (" + f.sizeMB + " MB)" : "");
     setRelinkBusy(true, "⏳ " + (st.idx + 1) + "/" + total);
 
-    function doExtendScriptRelink(preCopied) {
+    function doExtendScriptRelink(preCopied, trimResObj) {
         if (st.cancelled) {
             finishRelink(true);
             return;
         }
-        evalJson("cep_copyRelinkOne(" + JSON.stringify(String(st.idx)) + "," + (preCopied ? "1" : "0") + ")", function (res, err) {
+        var trimArg = trimResObj ? ("," + toEscapedJson(JSON.stringify(trimResObj))) : "";
+        evalJson("cep_copyRelinkOne(" + JSON.stringify(String(st.idx)) + "," + (preCopied ? "1" : "0") + trimArg + ")", function (res, err) {
             if (err) {
                 st.failed++;
                 st.errors.push(f.name + ": " + err);
@@ -4014,7 +4591,38 @@ function relinkNextFile() {
         });
     }
 
-    if (FastCopy.isAvailable() && f.mediaPath) {
+    if (f.isTrim && f.mediaPath) {
+        SidecarClient.trimCopySingle({
+            trimKey: f.trimKey || "",
+            srcPath: f.mediaPath,
+            name: f.name,
+            sizeBytes: f.sizeBytes || 0,
+            padSec: (typeof f.padSec === "number") ? f.padSec : 10,
+            rangeSpec: { mode: "full", inSec: f.reqInSec || 0, outSec: f.reqOutSec || 5 }
+        }, st.footagePath, function (msg) {
+            dom.currentActionText.textContent = msg;
+        }, function (trimRes) {
+            if ((trimRes && trimRes.cancelled) || st.cancelled) {
+                finishRelink(true);
+                return;
+            }
+            if (trimRes && trimRes.ok && trimRes.filePath) {
+                dom.currentActionText.textContent = "Đang relink đoạn cắt gọn: " + f.name + "...";
+                doExtendScriptRelink(!trimRes.cached, trimRes);
+            } else {
+                addLog("warning", "Cắt gọn " + f.name + " thất bại → chuyển sang copy cả file");
+                if (FastCopy.isAvailable()) {
+                    var destPathFallback = f.destPath || (String(st.footagePath || "").replace(/[\\\/]+$/, "") + "/" + f.name);
+                    FastCopy.copyFile(f.mediaPath, destPathFallback, f.sizeBytes || 0, function (cpRes) {
+                        if (cpRes.cancelled || st.cancelled) { finishRelink(true); return; }
+                        doExtendScriptRelink(!!(cpRes.ok && cpRes.copied), null);
+                    });
+                } else {
+                    doExtendScriptRelink(false, null);
+                }
+            }
+        });
+    } else if (FastCopy.isAvailable() && f.mediaPath) {
         var destPath = f.destPath || (String(st.footagePath || "").replace(/[\\\/]+$/, "") + "/" + f.name);
         FastCopy.copyFile(f.mediaPath, destPath, f.sizeBytes || 0, function (cpRes) {
             if (cpRes.cancelled || st.cancelled) {
@@ -4022,10 +4630,10 @@ function relinkNextFile() {
                 return;
             }
             dom.currentActionText.textContent = "Đang relink: " + f.name + "...";
-            doExtendScriptRelink(!!(cpRes.ok && cpRes.copied));
+            doExtendScriptRelink(!!(cpRes.ok && cpRes.copied), null);
         });
     } else {
-        setTimeout(function () { doExtendScriptRelink(false); }, 25);
+        setTimeout(function () { doExtendScriptRelink(false, null); }, 25);
     }
 }
 

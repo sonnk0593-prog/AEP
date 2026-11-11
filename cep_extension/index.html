@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Auto Import &amp; Cut V2</title>
+    <title>Auto Import &amp; Cut V3</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
         <!-- Header -->
         <header class="header-card">
             <div class="header-title-group">
-                <h1>Auto Import &amp; Cut V2</h1>
+                <h1>Auto Import &amp; Cut V3</h1>
                 <p>Tự động dựng kịch bản Google Sheet</p>
             </div>
             <div class="header-actions">
@@ -61,6 +61,27 @@
                         <span>Copy file về Footage/</span>
                     </label>
                 </div>
+                <div id="smartTrimBlock" class="auto-timecode-block" style="margin-top: 8px; margin-bottom: 10px;">
+                    <div class="auto-timecode-head">
+                        <label class="checkbox-label" style="margin: 0; cursor: pointer;">
+                            <input type="checkbox" id="chkSmartTrimCopy" checked>
+                            <span class="mapping-title">✂️ Copy cắt gọn theo Timecode (File nặng)</span>
+                        </label>
+                    </div>
+                    <div class="auto-timecode-section">
+                        <div class="auto-timecode-option">
+                            <span>File nặng trên</span>
+                            <input type="number" id="txtTrimThresholdGB" class="num-input" value="1" min="0.1" max="100" step="0.1" style="width: 52px;">
+                            <span>GB → chỉ cắt đoạn dùng</span>
+                        </div>
+                        <div class="auto-timecode-option" style="margin-top: 6px;">
+                            <span>Trừ hao đầu &amp; đuôi ±</span>
+                            <input type="number" id="txtTrimPadSec" class="num-input" value="10" min="0" max="300" step="1" style="width: 52px;">
+                            <span>giây quanh đoạn cắt</span>
+                        </div>
+                    </div>
+                    <div class="auto-timecode-note">💡 File dưới mức GB này sẽ copy cả file (dùng lại nếu trùng). File lớn hơn sẽ tách thành từng đoạn riêng đã cộng trừ hao ± giây đầu/đuôi.</div>
+                </div>
                 <input type="number" id="txtDefaultSec" value="5" hidden>
                 <input type="checkbox" id="chkTram" checked hidden>
                 <div class="auto-timecode-block">
@@ -68,13 +89,20 @@
                         <span class="mapping-title">⏱ Timecode tự động</span>
                     </div>
                     <div class="auto-timecode-section">
-                        <div class="auto-timecode-option">
-                            <input type="checkbox" id="chkSingleTime" checked hidden>
-                            <span>Chỉ có 1 Timecode</span>
-                            <span>lấy</span>
+                        <div class="auto-timecode-label">Chỉ có 1 Timecode</div>
+                        <input type="checkbox" id="chkSingleTime" checked hidden>
+                        <label class="radio-label">
+                            <input type="radio" name="singleTimecodeMode" id="radioSingleAfter" value="after" checked>
+                            <span>Lấy</span>
+                            <input type="number" id="txtSingleTimeAfterSec" class="num-input" value="5" min="1" max="60">
+                            <span>giây sau timecode</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="singleTimecodeMode" id="radioSingleBefore" value="before">
+                            <span>Lấy</span>
                             <input type="number" id="txtSingleTimeSec" class="num-input" value="5" min="1" max="60">
                             <span>giây trước timecode</span>
-                        </div>
+                        </label>
                     </div>
                     <div class="auto-timecode-section">
                         <div class="auto-timecode-label">Không có timecode</div>
@@ -299,9 +327,11 @@
                 <button id="btnChangelogClose" class="btn-ai-modal-close" title="Đóng">✕</button>
             </div>
             <div class="changelog-list">
-                <div>- <strong>Phân loại &amp; Bật/Tắt từng loại Media:</strong> Tự động phân loại <code>📁 File NAS</code>, <code>🎬 Envato</code>, <code>▶️ YouTube</code> tại mục Kiểm tra đường dẫn media (chỉ hiển thị công tắc cho thể loại có trong kịch bản, mặc định bật hết)</div>
-                <div>- <strong>Tải ngầm Stock Video từ Envato (4K / Original):</strong> Hỗ trợ tải ngầm (Headless) từ <code>app.envato.com</code> và <code>elements.envato.com</code> bằng tài khoản cá nhân mà không làm bật cửa sổ trình duyệt, tự động cắt theo timecode và chèn lên V1/V2</div>
-                <div>- <strong>Nâng cấp tải YouTube chuẩn H.264 MP4:</strong> Ưu tiên tải stream <code>H.264 (avc1) + AAC (.mp4)</code> tương thích hoàn toàn với Premiere Pro và lưu cache thông minh theo mã video</div>
+                <div>- <strong>Copy cắt gọn theo Timecode (Smart Trim Copy cho file nặng):</strong> Tùy chọn tự động kiểm tra dung lượng file nguồn khi copy về <code>Footage/</code>: file dưới <strong>X GB</strong> (mặc định <code>1 GB</code>) sẽ copy nguyên file (và dùng lại nếu lặp nhiều dòng); file nặng trên <strong>X GB</strong> sẽ chỉ cắt lấy đúng đoạn video theo kịch bản timecode cộng trừ hao <strong>± Y giây</strong> đầu &amp; đuôi (mặc định <code>± 10s</code>) bằng FFmpeg Keyframe Stream Copy siêu tốc, giữ nguyên điểm cắt chính xác trên Timeline</div>
+                <div>- <strong>Kiến trúc Sidecar Pro V3 (Độc lập 100% với bản V2):</strong> Toàn bộ việc tải YouTube, kiểm tra &amp; convert codec được tách sang <strong>Sidecar Backend Server</strong> chạy ngầm ngoài CEP (<code>127.0.0.1:9395</code>). Có thể mở và dùng song song cả bản V2 lẫn V3 trong Premiere Pro mà không xung đột</div>
+                <div>- <strong>Tự động Convert Codec sang H.264 MP4 chuẩn Premiere:</strong> Mọi video tải từ YouTube (AV1 <code>av01</code>, VP9 <code>vp09</code>, Opus, <code>.webm</code>, <code>.mkv</code>), Envato (ProRes/MOV lạ) hoặc file NAS bị Premiere từ chối import đều được tự động kiểm tra bằng <code>ffprobe</code> và convert/remux siêu tốc bằng <code>ffmpeg</code> sang <code>H.264 (avc1 yuv420p) + AAC .mp4</code> có thanh tiến độ 0–100% thời gian thực</div>
+                <div>- <strong>Phân loại &amp; Bật/Tắt từng loại Media:</strong> Tự động phân loại <code>📁 File NAS</code>, <code>🎬 Envato</code>, <code>▶️ YouTube</code> kèm công tắc Bật/Tắt cho từng loại</div>
+                <div>- <strong>Tải Stock Video từ Envato (4K / Original):</strong> Hỗ trợ tải ngầm trực tiếp từ <code>app.envato.com</code> và <code>elements.envato.com</code> bằng tài khoản cá nhân, ưu tiên chất lượng cao nhất, tự động cắt theo timecode và chèn lên V1/V2</div>
                 <div>- <strong>Chế độ chống khoá tài khoản Envato:</strong> Tải tuần tự kèm độ trễ ngẫu nhiên (3.5–6.5s) và lưu cache theo mã video tại <code>Footage/</code> để không tải trùng</div>
                 <div>- <strong>Cột Source gộp đường dẫn:</strong> Tự động nhận diện đường dẫn file đầy đủ (UNC hoặc ổ đĩa) trong cột Source mà không cần cột tên file riêng</div>
                 <div>- <strong>Chỉ có link Folder:</strong> Tự động quét và lấy ngẫu nhiên X file (mặc định 3 file, 2s/file), tùy chỉnh được trong Cấu hình dựng</div>

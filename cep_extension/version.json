@@ -1,14 +1,15 @@
 {
-    "version":  "2.4.0",
+    "version":  "3.1.2",
     "notes":  [
-                  "Phân loại \u0026 tuỳ chọn Bật/Tắt 3 thể loại media (File NAS, Envato, YouTube) tại mục Kiểm tra đường dẫn media",
-                  "Tích hợp tải ngầm (Headless) Stock Video 4K/Original từ Envato không hiện cửa sổ trình duyệt",
-                  "Sửa lỗi tải video YouTube trên Windows và ưu tiên codec H.264 (avc1) + AAC (.mp4) tương thích Premiere Pro"
+                  "Nâng cấp lên Auto Import \u0026 Cut V3 (Sidecar Pro)",
+                  "Hỗ trợ Smart Trim Copy cắt gọn file nặng \u003e1GB theo đúng đoạn timecode (±10s)",
+                  "Tự động tải YouTube tốc độ cao và convert mọi codec lạ sang H.264 MP4 chuẩn Premiere",
+                  "Tương thích nâng cấp OTA trực tiếp từ bản V2 không cần cài đặt lại"
               ],
     "files":  [
                   {
                       "path":  "index.html",
-                      "sha256":  "9c3debfc960378a621b2129f936fd1d8ea3d01cb11fd0aff895d5b5a5ca42197"
+                      "sha256":  "c1a3056dde104f51959b3f6e69f33b20e31b97d68d6c0a205196924f31cb742b"
                   },
                   {
                       "path":  "css/style.css",
@@ -20,15 +21,19 @@
                   },
                   {
                       "path":  "js/updater.js",
-                      "sha256":  "a8305eb52332de2357ab9329166a7c1833fef17d85027d6d6ef41d1273b314d6"
+                      "sha256":  "0314346a6935a61b0ca70199f33099d0b668441e0522eaa507ded62ce0885405"
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "89b0851297da2ba0a50e1d5fd724b6079b0f4b1d157cbe2bfe66fd1078af8719"
+                      "sha256":  "53e49d7ab60f2a3c47971db17a1d22d5791ce54f3d9cf6cf94e6929c62e23744"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "7919956c746c38edfec27a05779a3b63f5df049cf542093a2961fe865a028a4b"
+                      "sha256":  "ab974afc1050c113f70a57a546607945bcefc10cb59bdaa1fa77988325f0269f"
+                  },
+                  {
+                      "path":  "backend/server.js",
+                      "sha256":  "500a06cc9ec3c631ce8c866b5cd76818df7590b9769c5da57ad1c0c652bad8a9"
                   },
                   {
                       "path":  "sound/done.mp3",

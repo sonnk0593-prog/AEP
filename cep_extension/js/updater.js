@@ -325,10 +325,10 @@ var Updater = (function () {
             // của panel — lúc đó before và after bằng nhau, không hề có ngoại lệ nào.
             var script =
                 '(function(){' +
-                ' var b = (typeof IMPORTCUT_VERSION !== "undefined") ? IMPORTCUT_VERSION : "(chua co)";' +
+                ' var b = ($.global.AIC_V3 && $.global.AIC_V3.IMPORTCUT_VERSION) ? $.global.AIC_V3.IMPORTCUT_VERSION : "(chua co)";' +
                 ' try {' +
                 '  var r = $.evalFile(new File(' + JSON.stringify(jsx) + '));' +
-                '  var a = (typeof IMPORTCUT_VERSION !== "undefined") ? IMPORTCUT_VERSION : "(chua co)";' +
+                '  var a = ($.global.AIC_V3 && $.global.AIC_V3.IMPORTCUT_VERSION) ? $.global.AIC_V3.IMPORTCUT_VERSION : "(chua co)";' +
                 '  return "OK|" + a + "|truoc=" + b + " sau=" + a + " tra-ve=" + r;' +
                 ' } catch(e) { return "ERR||" + e.toString(); }' +
                 '})()';

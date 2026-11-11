@@ -1,20 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-    LUU Y VE PHIEN BAN:
-    So o day CO DINH, khong tang moi lan phat hanh ban moi.
-    Premiere chi doc manifest luc khoi dong, nen doi so o day = bat nguoi dung
-    khoi dong lai Premiere, lam mat y nghia cua cap nhat tu dong (OTA).
-    Phien ban that nam o APP_VERSION (js/app.js) + IMPORTCUT_VERSION (jsx/hostscript.jsx).
-    Chi sua o day khi doi dong san pham (V2 -> V3) hoac doi cau hinh panel.
--->
-<ExtensionManifest Version="7.0" ExtensionBundleId="com.antigravity.autoimportcut.v2" ExtensionBundleVersion="2.0.0"
-        ExtensionBundleName="Auto Import &amp; Cut V2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.antigravity.autoimportcut.v3" ExtensionBundleVersion="3.0.0"
+        ExtensionBundleName="Auto Import &amp; Cut V3" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <ExtensionList>
-        <Extension Id="com.antigravity.autoimportcut.v2.panel" Version="2.0.0" />
+        <Extension Id="com.antigravity.autoimportcut.v3.panel" Version="3.0.0" />
     </ExtensionList>
     <ExecutionEnvironment>
         <HostList>
-            <!-- Premiere Pro CC 2018 (12.0) up to Premiere Pro 2025+ (99.0) -->
             <Host Name="PPRO" Version="[12.0,99.9]" />
         </HostList>
         <LocaleList>
@@ -25,20 +16,11 @@
         </RequiredRuntimeList>
     </ExecutionEnvironment>
     <DispatchInfoList>
-        <Extension Id="com.antigravity.autoimportcut.v2.panel">
+        <Extension Id="com.antigravity.autoimportcut.v3.panel">
             <DispatchInfo>
                 <Resources>
                     <MainPath>./index.html</MainPath>
                     <ScriptPath>./jsx/hostscript.jsx</ScriptPath>
-                    <!--
-                        Ten the PHAI la CEFCommandLine.
-                        Truoc day ghi nham thanh CEPEngine + CommandLine: CEP gap the la
-                        thi bo qua im lang, khong bao loi, nen co enable-nodejs khong bao
-                        gio co tac dung va require() luon that bai trong panel.
-                        CANH BAO: tuyet doi khong go hai dau gach ngang lien nhau vao
-                        trong comment cua XML. Do la ky tu ket thuc comment, manifest se
-                        hong va Premiere lang le khong nap panel nua.
-                    -->
                     <CEFCommandLine>
                         <Parameter>--enable-nodejs</Parameter>
                         <Parameter>--mixed-context</Parameter>
@@ -49,18 +31,8 @@
                 </Lifecycle>
                 <UI>
                     <Type>Panel</Type>
-                    <Menu>Auto Import &amp; Cut V2</Menu>
+                    <Menu>Auto Import &amp; Cut V3 (Sidecar Pro)</Menu>
                     <Geometry>
-                        <!--
-                            Size = kich thuoc panel luc MOI mo lan dau.
-                            De 580x950 cho thay het mot luot: khoi kich ban, cau hinh
-                            dung, ba nut chinh, nut Xuat XML va bang thong ke - khong
-                            phai keo panel to ra moi lan mo.
-                            LUU Y: Premiere NHO kich thuoc panel theo workspace. Neu
-                            truoc do da mo va keo panel roi thi no dung so da nho, khong
-                            dung so o day. Muon ap lai: Window > Workspaces > Reset to
-                            Saved Layout.
-                        -->
                         <Size>
                             <Width>580</Width>
                             <Height>950</Height>
