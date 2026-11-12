@@ -20,7 +20,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "3.1.2";
+var APP_VERSION = "3.1.3";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -2164,12 +2164,18 @@ var SidecarClient = (function () {
         } catch (eInProc) {}
     }
 
+    var SIDECAR_MIN_VERSION = '3.1.3';
+
     function ensureRunning(cb) {
         httpReq('GET', '/health', null, function (err, data) {
             if (!err && data && data.ok) {
-                updateBadge(true, 'Sidecar ✓');
-                if (cb) cb(true, data);
-                return;
+                if (data.version && data.version !== SIDECAR_MIN_VERSION && data.pid && nodeCp) {
+                    try { nodeCp.spawnSync('taskkill.exe', ['/PID', String(data.pid), '/T', '/F'], { windowsHide: true }); } catch (eKill) {}
+                } else {
+                    updateBadge(true, 'Sidecar ✓');
+                    if (cb) cb(true, data);
+                    return;
+                }
             }
             if (starting) {
                 setTimeout(function () { ensureRunning(cb); }, 500);
@@ -2221,10 +2227,14 @@ var SidecarClient = (function () {
         });
     }
 
+    function isCancelRequested() {
+        return !!(cancelled || (state.isRunning && state.shouldCancel) || (state.relink && state.relink.cancelled));
+    }
+
     function pollJob(jobId, displayLabel, onStatus, cb) {
         if (activePollTimer) { clearTimeout(activePollTimer); activePollTimer = null; }
         function tick() {
-            if (cancelled || state.shouldCancel) {
+            if (isCancelRequested()) {
                 httpReq('POST', '/cancel', {}, function () {});
                 hideCopyProgress();
                 cb({ ok: false, cancelled: true, error: 'Đã huỷ' });
@@ -2260,6 +2270,7 @@ var SidecarClient = (function () {
     }
 
     function downloadYouTubeSingle(item, footageDir, onStatus, cb) {
+        cancelled = false;
         ensureRunning(function (online) {
             if (!online) {
                 cb({ ok: false, error: 'Sidecar Backend chưa khởi động được' });
@@ -2284,7 +2295,7 @@ var SidecarClient = (function () {
         cancelled = false;
         var idx = 0, downloadedCount = 0, errors = [];
         function next() {
-            if (cancelled || state.shouldCancel) {
+            if (isCancelRequested()) {
                 cb({ ok: false, cancelled: true, downloadedCount: downloadedCount, errors: errors });
                 return;
             }
@@ -2347,6 +2358,7 @@ var SidecarClient = (function () {
     }
 
     function trimCopySingle(item, footageDir, onStatus, cb) {
+        cancelled = false;
         ensureRunning(function (online) {
             if (!online) {
                 cb({ ok: false, error: 'Sidecar Backend chưa khởi động được' });
@@ -2383,7 +2395,7 @@ var SidecarClient = (function () {
         cancelled = false;
         var idx = 0, copiedCount = 0, errors = [];
         function next() {
-            if (cancelled || state.shouldCancel) {
+            if (isCancelRequested()) {
                 cb({ ok: false, cancelled: true, copiedCount: copiedCount, errors: errors });
                 return;
             }
@@ -4218,6 +4230,7 @@ function cancelCurrentProcess() {
     if (state.relink) {
         state.relink.cancelled = true;
         FastCopy.cancel();
+        SidecarClient.cancel();
         markStopping("Đang dừng Copy & Relink…");
         addLog("info", "Đã yêu cầu dừng Copy & Relink Footage.");
         return;
@@ -4252,9 +4265,12 @@ function cancelCurrentProcess() {
 function finishProcess(message) {
     var wasCancelled = state.shouldCancel;
     state.isRunning = false;
-    FastCopy.cancel();
-    EnvatoDownloader.cancel();
-    SidecarClient.cancel();
+    state.shouldCancel = false;
+    if (wasCancelled) {
+        FastCopy.cancel();
+        EnvatoDownloader.cancel();
+        SidecarClient.cancel();
+    }
     CopyMonitor.stop();
     csInterface.evalScript("cep_finishSession()", function () {});
 
@@ -4448,6 +4464,7 @@ function askCopyAndRelink() {
 
 function runCopyAndRelink() {
     hideToast();
+    state.shouldCancel = false;
     setRelinkBusy(true, "⏳ Đang quét Timeline...");
     addLog("info", "Bắt đầu Copy & Relink Footage...");
 

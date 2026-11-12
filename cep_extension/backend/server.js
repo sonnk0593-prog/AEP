@@ -20,7 +20,7 @@ const urlMod = require("url");
 
 const PORT = parseInt(process.env.AIC_V3_PORT || "9395", 10);
 const HOST = "127.0.0.1";
-const VERSION = "3.1.0";
+const VERSION = "3.1.3";
 
 // ============================================================================
 // 1. TÌM CÔNG CỤ (yt-dlp, ffmpeg, ffprobe)
@@ -165,9 +165,6 @@ function probeMediaFile(filePath, cb) {
             } else if (!PREMIERE_SUPPORTED_VCODECS[vCodec] && vCodec !== "hevc") {
                 compatible = false;
                 reasons.push("Codec video lạ (" + vCodec + ")");
-            } else if (vCodec === "h264" && pixFmt && pixFmt.indexOf("10") !== -1) {
-                compatible = false;
-                reasons.push("H.264 10-bit (" + pixFmt + ") dễ gây đen hình trên Premiere");
             }
         }
 
@@ -889,15 +886,16 @@ function runTrimCopyJob(job, opts) {
                     "-i", srcPath
                 ];
                 if (useStreamCopy) {
-                    args.push("-c", "copy", "-avoid_negative_ts", "make_zero");
+                    args.push("-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-avoid_negative_ts", "make_zero");
                 } else {
                     args.push(
+                        "-map", "0:v:0", "-map", "0:a:0?",
                         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
                         "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000"
                     );
-                }
-                if (outExt.toLowerCase() === ".mp4" || outExt.toLowerCase() === ".mov" || outExt.toLowerCase() === ".m4v") {
-                    args.push("-movflags", "+faststart");
+                    if (outExt.toLowerCase() === ".mp4" || outExt.toLowerCase() === ".mov" || outExt.toLowerCase() === ".m4v") {
+                        args.push("-movflags", "+faststart");
+                    }
                 }
                 args.push("-progress", "pipe:1", "-nostats", tempOutPath);
 

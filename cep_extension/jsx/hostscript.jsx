@@ -1,4 +1,4 @@
-﻿$.global.AIC_V3 = (function () {
+$.global.AIC_V3 = (function () {
 /*
     hostscript.jsx - Backend ExtendScript for Premiere Pro CEP Extension
     Auto Import & Cut V2
@@ -22,7 +22,7 @@
 // ghi de ham cua panel nap truoc. Panel doi chieu bien nay de biet script dang
 // chay co dung cua no khong.
 // ============================================================================
-var IMPORTCUT_VERSION = "3.1.2";
+var IMPORTCUT_VERSION = "3.1.3";
 
 var TICKS_PER_SECOND = 254016000000;
 var MEDIA_TYPE = 4;
@@ -3623,8 +3623,11 @@ function cep_copyRelinkOne(idxStr, preCopiedFlag, trimResJsonStr) {
                 var locIn = (typeof trimRes.localInSec === "number") ? trimRes.localInSec : 0;
                 var locOut = (typeof trimRes.localOutSec === "number") ? trimRes.localOutSec : (locIn + (job.clipDurSec || 5));
                 if (job.clipDurSec && job.clipDurSec > 0) locOut = locIn + job.clipDurSec;
-                trimPi.setInPoint(Math.round(locIn * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
-                trimPi.setOutPoint(Math.round(locOut * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                var inTicksStr = Math.round(locIn * TICKS_PER_SECOND).toString();
+                var outTicksStr = Math.round(locOut * TICKS_PER_SECOND).toString();
+                try { trimPi.setOutPoint(outTicksStr, MEDIA_TYPE); } catch (eO1) {}
+                trimPi.setInPoint(inTicksStr, MEDIA_TYPE);
+                trimPi.setOutPoint(outTicksStr, MEDIA_TYPE);
                 var insRes = insertAndRenameClip(trk, trimPi, job.insertPosSec || 0, job.clipName || null, locOut - locIn, false);
                 if (insRes.error) return toJson({ success: false, name: job.name, error: insRes.error });
                 return toJson({
