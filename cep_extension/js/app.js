@@ -20,7 +20,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "3.1.3";
+var APP_VERSION = "3.1.4";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -107,6 +107,7 @@ var state = {
     ,checkCancelled: false
     ,checkInProgress: false
     ,envatoFiles: {}
+    ,youtubeFiles: {}
     ,footageFolderPath: ""
     ,mediaTypeEnabled: { nas: true, envato: true, youtube: true }
     ,convertedFiles: {}
@@ -185,10 +186,10 @@ var GeminiAPI = (function () {
             "=== MÔ TẢ TỪNG TRƯỜNG ===\n" +
             "sourceCol — thư mục chứa video của source chính: \\\\server\\..., D:\\..., hoặc link http/https (ví dụ link Envato).\n" +
             "          ĐẶT -1 nếu cột file đã chứa sẵn ĐƯỜNG DẪN ĐẦY ĐỦ tới file (kể cả khi ô có dấu nháy bao quanh).\n" +
-            "          LƯU Ý: Nếu một nhóm chỉ có 1 cột media duy nhất chứa link Envato (https://app.envato.com/... hoặc https://elements.envato.com/...) hoặc đường dẫn folder (không có cột mã file riêng), hãy đặt cả sourceCol và codeCol cùng trỏ vào cột đó.\n" +
+            "          LƯU Ý: Nếu một nhóm chỉ có 1 cột media duy nhất chứa link YouTube, Envato, link ảnh/video http(s):// hoặc đường dẫn đầy đủ (không có cột mã file riêng), hãy đặt codeCol trỏ vào cột đó và sourceCol = -1 (tương tự tramCodeCol cho nhóm trám, tramSourceCol = -1).\n" +
             "codeCol — mã hoặc tên file: C0682, DJI_20260818150455_0052_D, GH010234, GOPR0001,\n" +
-            "          hoặc tên file đầy đủ 'C0704.MP4', cả đường dẫn đầy đủ tới file, hoặc link video Envato/YouTube.\n" +
-            "          Một ô có thể chứa nhiều mã trên nhiều dòng.\n" +
+            "          hoặc tên file đầy đủ 'C0704.MP4', cả đường dẫn đầy đủ tới file, hoặc link video YouTube/Envato/URL.\n" +
+            "          Một ô có thể chứa nhiều mã hoặc nhiều link trên nhiều dòng.\n" +
             "timeCol — timecode cắt: '0:07 - 0:19', '00:01:23 - 00:02:45', hoặc chỉ 1 mốc '00:06'.\n" +
             "          Đặt -1 NẾU BẢNG KHÔNG CÓ cột timecode nào (hoàn toàn hợp lệ).\n" +
             "bodyCol — cột nội dung/lời thoại mô tả cảnh; đặt -1 nếu không có.\n" +
@@ -224,8 +225,18 @@ var GeminiAPI = (function () {
             for (var i = 0; i < fields.length; i++) {
                 if (typeof cols[fields[i]] !== "number") cols[fields[i]] = -1;
             }
-            // Trám phải là một NHÓM đầy đủ: không có mã file trám thì không có trám
-            if (cols.tramCodeCol === -1) { cols.tramSourceCol = -1; cols.tramTimeCol = -1; }
+            if (cols.codeCol === -1 && cols.sourceCol !== -1) {
+                cols.codeCol = cols.sourceCol;
+                cols.sourceCol = -1;
+                cols.fullPathCode = true;
+            }
+            if (cols.tramCodeCol === -1 && cols.tramSourceCol !== -1) {
+                cols.tramCodeCol = cols.tramSourceCol;
+                cols.tramSourceCol = -1;
+            }
+            if (cols.tramCodeCol === -1 && cols.tramSourceCol === -1) {
+                cols.tramTimeCol = -1;
+            }
             cols.detectedByAI = true;
             return cols;
         });
@@ -243,7 +254,7 @@ var GeminiAPI = (function () {
             "- 'hết', 'cuối', 'đến hết', 'đến cuối' là mốc END, không tự đoán số giây. " +
             "Ví dụ 'đầu - 00:30' thành '00:00 - 00:30'; '00:30 - hết' thành '00:30 - END'; 'đầu - cuối' thành '00:00 - END'.\n" +
             "- Giữ nguyên timecode số đã đúng, chỉ chuẩn hóa về MM:SS hoặc HH:MM:SS và dấu ' - '.\n" +
-            "- Chuẩn hóa đường dẫn: bỏ dấu nháy thừa, dùng dấu gạch chéo ngược cho đường dẫn Windows, không đổi nội dung đường dẫn. TUYỆT ĐỐI giữ nguyên dấu '/' cho các đường link URL http:// hoặc https:// (ví dụ link Envato).\n" +
+            "- Chuẩn hóa đường dẫn: bỏ dấu nháy thừa, dùng dấu gạch chéo ngược cho đường dẫn Windows, không đổi nội dung đường dẫn. TUYỆT ĐỐI giữ nguyên dấu '/' cho các đường link URL http:// hoặc https:// (ví dụ link Envato, YouTube, link ảnh/video trực tiếp).\n" +
             "- Chuẩn hóa mã file: bỏ khoảng trắng/dấu nháy thừa, giữ nguyên mã đầy đủ; không tự thêm ký tự hoặc đoán tên file.\n" +
             "- Không sửa nội dung lời thoại, header hoặc các cột khác. Nếu không cần sửa, không đưa dòng đó vào kết quả.\n\n" +
             "CSV:\n" + csvContent + "\n\nTrả về ví dụ: [{\"rowIndex\":1,\"time\":\"00:00 - 00:30\"}]";
@@ -2273,7 +2284,7 @@ var SidecarClient = (function () {
         cancelled = false;
         ensureRunning(function (online) {
             if (!online) {
-                cb({ ok: false, error: 'Sidecar Backend chưa khởi động được' });
+                cb({ ok: false, sidecarOnline: false, error: 'Sidecar Backend chưa khởi động được' });
                 return;
             }
             httpReq('POST', '/start-youtube', {
@@ -2283,32 +2294,41 @@ var SidecarClient = (function () {
                 footageDir: footageDir
             }, function (err, res) {
                 if (err || !res || !res.ok || !res.jobId) {
-                    cb({ ok: false, error: (res && res.error) ? res.error : 'Không tạo được tác vụ tải YouTube' });
+                    cb({ ok: false, sidecarOnline: true, error: (res && res.error) ? res.error : 'Không tạo được tác vụ tải YouTube' });
                     return;
                 }
-                pollJob(res.jobId, 'YouTube [' + (item.id || '') + ']', onStatus, cb);
+                pollJob(res.jobId, 'YouTube [' + (item.id || '') + ']', onStatus, function (ytRes) {
+                    if (ytRes) ytRes.sidecarOnline = true;
+                    if (ytRes && ytRes.ok && ytRes.filePath) {
+                        if (!state.youtubeFiles) state.youtubeFiles = {};
+                        if (item.id) state.youtubeFiles[item.id] = ytRes.filePath;
+                        if (item.url) state.youtubeFiles[item.url] = ytRes.filePath;
+                    }
+                    cb(ytRes);
+                });
             });
         });
     }
 
     function downloadYouTubeBatch(items, footageDir, onStep, cb) {
         cancelled = false;
-        var idx = 0, downloadedCount = 0, errors = [];
+        var idx = 0, downloadedCount = 0, errors = [], anySidecarOnline = false;
         function next() {
             if (isCancelRequested()) {
-                cb({ ok: false, cancelled: true, downloadedCount: downloadedCount, errors: errors });
+                cb({ ok: false, cancelled: true, sidecarOnline: anySidecarOnline, downloadedCount: downloadedCount, errors: errors });
                 return;
             }
             if (idx >= items.length) {
-                cb({ ok: true, downloadedCount: downloadedCount, errors: errors });
+                cb({ ok: true, sidecarOnline: anySidecarOnline, downloadedCount: downloadedCount, errors: errors });
                 return;
             }
             var item = items[idx];
             downloadYouTubeSingle(item, footageDir, function (msg) {
                 if (onStep) onStep(item, idx, items.length, msg);
             }, function (res) {
+                if (res && res.sidecarOnline) anySidecarOnline = true;
                 if (res.cancelled) {
-                    cb({ ok: false, cancelled: true, downloadedCount: downloadedCount, errors: errors });
+                    cb({ ok: false, cancelled: true, sidecarOnline: anySidecarOnline, downloadedCount: downloadedCount, errors: errors });
                     return;
                 }
                 if (!res.ok) {
@@ -3122,14 +3142,22 @@ function getManualCols() {
         tramCodeCol: selVal(dom.selTramCode),
         tramTimeCol: selVal(dom.selTramTime)
     };
-    if (cols.codeCol === -1) {
-        showAlert("Thiếu cột bắt buộc", "Chế độ thủ công cần chọn cột <strong>Tên file</strong> cho Source chính (V1).\n\nVí dụ: tên/mã file nằm ở cột C thì chọn <code>C</code>.", "warning");
+    if (cols.codeCol === -1 && cols.sourceCol !== -1) {
+        cols.codeCol = cols.sourceCol;
+        cols.sourceCol = -1;
+        cols.fullPathCode = true;
+    }
+    if (cols.tramCodeCol === -1 && cols.tramSourceCol !== -1) {
+        cols.tramCodeCol = cols.tramSourceCol;
+        cols.tramSourceCol = -1;
+    }
+    if (cols.codeCol === -1 && cols.sourceCol === -1) {
+        showAlert("Thiếu cột bắt buộc", "Chế độ thủ công cần chọn cột <strong>Folder</strong> hoặc <strong>Tên file</strong> cho Source chính (V1).\n\nVí dụ: tên/mã file hoặc link nằm ở cột C thì chọn <code>C</code>.", "warning");
         return null;
     }
-    // Trám phải có mã file mới chèn được — chọn mỗi Folder/Timecode thì bỏ qua trám
-    if (cols.tramCodeCol === -1 && (cols.tramSourceCol !== -1 || cols.tramTimeCol !== -1)) {
-        addLog("warning", "Chưa chọn cột Tên file cho Source trám (V2) → bỏ qua phần trám.");
-        cols.tramSourceCol = -1; cols.tramTimeCol = -1;
+    if (cols.tramCodeCol === -1 && cols.tramSourceCol === -1 && cols.tramTimeCol !== -1) {
+        addLog("warning", "Chưa chọn cột Folder / Tên file cho Source trám (V2) → bỏ qua timecode trám.");
+        cols.tramTimeCol = -1;
     }
     return cols;
 }
@@ -3315,9 +3343,9 @@ function processDownloadedCsv(csvText, parsed) {
                             }
                             state.parsedData = applied;
                             var c = applied.cols;
-                            addLog("success", "✨ Gemini AI: Source=cột " + (c.sourceCol+1) + ", Mã file=cột " + (c.codeCol+1) +
+                            addLog("success", "✨ Gemini AI: Source=" + (c.sourceCol === -1 ? "không có" : ("cột " + (c.sourceCol+1))) + ", Mã file=" + (c.codeCol === -1 ? "tự quét link" : ("cột " + (c.codeCol+1))) +
                                    ", Time=" + (c.timeCol === -1 ? "không có" : ("cột " + (c.timeCol+1))) +
-                                   (c.tramCodeCol !== -1 ? (" | TRÁM: Source=cột " + (c.tramSourceCol+1) + ", Mã file=cột " + (c.tramCodeCol+1)) : " | không có trám"));
+                                   ((c.tramCodeCol !== -1 || c.tramSourceCol !== -1) ? (" | TRÁM: Source=" + (c.tramSourceCol === -1 ? "không có" : ("cột " + (c.tramSourceCol+1))) + ", Mã file=" + (c.tramCodeCol === -1 ? "không có" : ("cột " + (c.tramCodeCol+1)))) : " | không có trám"));
                             warnMissingTimeCols(c);
                             scriptLoadedForCheck();
                         });
@@ -3372,15 +3400,15 @@ function processCsvWithManualCols() {
 /** Mô tả bộ cột đã nhận diện để soi nhanh trong log khi chạy nhiều kiểu kịch bản khác nhau. */
 function describeCols(c) {
     if (!c) return "Không có thông tin cột";
-    function col(i) { return (i === -1) ? "không có" : ("cột " + (i + 1)); }
+    function col(i) { return (i === undefined || i === null || i === -1) ? "không có" : ("cột " + (i + 1)); }
     var s = "CHÍNH → Source=" + (c.fullPathCode ? "nằm luôn trong cột file" : col(c.sourceCol)) +
-            ", Mã file=" + col(c.codeCol) + (c.fullPathCode ? " (đường dẫn đầy đủ)" : "") +
+            ", Mã file=" + (c.codeCol === -1 ? "tự quét link" : col(c.codeCol)) + (c.fullPathCode ? " (đường dẫn đầy đủ / link)" : "") +
             ", Time=" + col(c.timeCol);
     if (c.timeCol === -1) s += " (dùng thời lượng mặc định)";
-    if (c.tramCodeCol !== -1) {
+    if (c.tramCodeCol !== -1 || c.tramSourceCol !== -1) {
         s += " | TRÁM → Source=" + col(c.tramSourceCol) + ", Mã file=" + col(c.tramCodeCol) + ", Time=" + col(c.tramTimeCol);
     } else {
-        s += " | không có source trám";
+        s += " | không có source trám (tự quét link nếu có)";
     }
     return s;
 }
@@ -3396,8 +3424,8 @@ function warnMissingTimeCols(cols) {
     if (cols.timeCol === -1) {
         addLog("warning", "Không tìm thấy cột timecode của source chính → mỗi clip lấy " + sec + "s ở giữa file. Kiểm tra lại cột timecode trong sheet.");
     }
-    if (cols.tramCodeCol !== -1 && cols.tramTimeCol === -1) {
-        addLog("warning", "Không tìm thấy cột timecode của source TRÁM → clip trám lấy " + sec + "s ở giữa file. Kiểm tra lại cột timecode của nhóm trám trong sheet.");
+    if ((cols.tramCodeCol !== -1 || cols.tramSourceCol !== -1) && cols.tramTimeCol === -1) {
+        addLog("warning", "Không tìm thấy cột timecode của source TRÁM → clip trám lấy " + sec + "s ở giữa file (hoặc tự canh theo V1).");
     }
 }
 
@@ -3880,6 +3908,7 @@ function startImportProcessCore() {
     state.currentRowIdx = 0;
     state.aiClipNames = {};
     state.trimmedFiles = {};
+    if (!state.youtubeFiles) state.youtubeFiles = {};
     resetStats();
 
     // Nut 2 o lai cho cu nhung khoa lai va doi chu - truoc day no bi AN DI va thay
@@ -3923,6 +3952,12 @@ function startImportProcessCore() {
                      toEscapedJson(state.csvContent) + "," +
                      toEscapedJson(JSON.stringify(_sessionCols())) + ")";
     csInterface.evalScript(initScript, function (resStr) {
+        try {
+            var initRes = JSON.parse(resStr);
+            if (initRes && initRes.footageFolderPath) {
+                state.footageFolderPath = initRes.footageFolderPath;
+            }
+        } catch (eInit) {}
         addLog("info", "Bắt đầu dựng " + state.parsedData.dataRowCount + " dòng kịch bản lên Timeline...");
 
         // AI Clip Namer: luôn bật khi có key và bật đổi tên theo số hàng
@@ -3963,7 +3998,7 @@ function startImportProcessCore() {
     });
 }
 
-function buildRowEvalScript(actualDataIndex, rowNumber, deferCopy, preCopiedCount, deferEnvato, preDownloadedCount, deferYouTube, allowConvertRetry, deferTrimCopy) {
+function buildRowEvalScript(actualDataIndex, rowNumber, deferCopy, preCopiedCount, deferEnvato, preDownloadedCount, deferYouTube, allowConvertRetry, deferTrimCopy, ytSidecarRan) {
     if (deferYouTube === undefined) deferYouTube = true;
     if (allowConvertRetry === undefined) allowConvertRetry = true;
     if (deferTrimCopy === undefined) deferTrimCopy = true;
@@ -3975,6 +4010,7 @@ function buildRowEvalScript(actualDataIndex, rowNumber, deferCopy, preCopiedCoun
         "var data = { " +
         "   rowNumber: " + rowNumber + ", " +
         "   rawRow: r, " +
+        "   cols: cols, " +
         "   body: (cols.bodyCol!==-1 ? r[cols.bodyCol] : ''), " +
         "   source: (cols.sourceCol!==-1 ? r[cols.sourceCol] : ''), " +
         "   code: (cols.codeCol!==-1 ? r[cols.codeCol] : ''), " +
@@ -3988,11 +4024,13 @@ function buildRowEvalScript(actualDataIndex, rowNumber, deferCopy, preCopiedCoun
         "   preCopiedCount: " + (preCopiedCount || 0) + ", " +
         "   deferEnvato: " + (deferEnvato ? "true" : "false") + ", " +
         "   deferYouTube: " + (deferYouTube ? "true" : "false") + ", " +
+        "   ytSidecarRan: " + (ytSidecarRan ? "true" : "false") + ", " +
         "   allowConvertRetry: " + (allowConvertRetry ? "true" : "false") + ", " +
         "   preDownloadedCount: " + (preDownloadedCount || 0) + ", " +
-        "   envatoFiles: " + JSON.stringify(state.envatoFiles || {}) + ", " +
-        "   convertedFiles: " + JSON.stringify(state.convertedFiles || {}) + ", " +
-        "   trimmedFiles: " + JSON.stringify(state.trimmedFiles || {}) + " " +
+        "   envatoFiles: " + toEscapedJson(state.envatoFiles || {}) + ", " +
+        "   youtubeFiles: " + toEscapedJson(state.youtubeFiles || {}) + ", " +
+        "   convertedFiles: " + toEscapedJson(state.convertedFiles || {}) + ", " +
+        "   trimmedFiles: " + toEscapedJson(state.trimmedFiles || {}) + " " +
         "}; " +
         "return cep_processSingleRow(toJson(data)); " +
     "})()";
@@ -4021,6 +4059,7 @@ function processNextRow() {
 
     var useFastCopy = !!(dom.chkCopy.checked && FastCopy.isAvailable());
     var useEnvatoDl = EnvatoDownloader.isAvailable();
+    var rowYtSidecarRan = false;
 
     function handleEvalResult(resStr, preDownloadedCount) {
         var result = null;
@@ -4059,7 +4098,7 @@ function processNextRow() {
                     return;
                 }
                 dom.currentActionText.textContent = "Đang import & cắt video Envato dòng " + rowNumber + "...";
-                var afterDlScript = buildRowEvalScript(actualDataIndex, rowNumber, useFastCopy, 0, false, dlRes.downloadedCount || 0);
+                var afterDlScript = buildRowEvalScript(actualDataIndex, rowNumber, useFastCopy, 0, false, dlRes.downloadedCount || 0, true, true, true, rowYtSidecarRan);
                 csInterface.evalScript(afterDlScript, function (resStrAfterDl) {
                     handleEvalResult(resStrAfterDl, dlRes.downloadedCount || 0);
                 });
@@ -4077,9 +4116,12 @@ function processNextRow() {
                     finishProcess("Đã dừng bởi người dùng");
                     return;
                 }
+                if (ytRes && ytRes.sidecarOnline !== false) {
+                    rowYtSidecarRan = true;
+                }
                 var totalDl = (preDownloadedCount || 0) + (ytRes.downloadedCount || 0);
                 dom.currentActionText.textContent = "Đang import & cắt video YouTube dòng " + rowNumber + "...";
-                var afterYtScript = buildRowEvalScript(actualDataIndex, rowNumber, useFastCopy, 0, false, totalDl, false, true);
+                var afterYtScript = buildRowEvalScript(actualDataIndex, rowNumber, useFastCopy, 0, false, totalDl, false, true, true, rowYtSidecarRan);
                 csInterface.evalScript(afterYtScript, function (resStrAfterYt) {
                     handleEvalResult(resStrAfterYt, totalDl);
                 });
@@ -4103,7 +4145,7 @@ function processNextRow() {
                 } else {
                     addLog("warning", "Dòng " + rowNumber + ": Convert codec thất bại (" + ((convRes && convRes.error) || "Lỗi FFmpeg") + ")");
                 }
-                var retryScript = buildRowEvalScript(actualDataIndex, rowNumber, false, 0, false, preDownloadedCount || 0, false, false);
+                var retryScript = buildRowEvalScript(actualDataIndex, rowNumber, false, 0, false, preDownloadedCount || 0, false, false, false, rowYtSidecarRan);
                 csInterface.evalScript(retryScript, function (resAfterConv) {
                     handleEvalResult(resAfterConv, preDownloadedCount || 0);
                 });
@@ -4122,7 +4164,7 @@ function processNextRow() {
                     return;
                 }
                 dom.currentActionText.textContent = "Đang chèn clip cắt gọn dòng " + rowNumber + "...";
-                var afterTrimScript = buildRowEvalScript(actualDataIndex, rowNumber, useFastCopy, trimRes.copiedCount || 0, false, preDownloadedCount || 0, false, true, false);
+                var afterTrimScript = buildRowEvalScript(actualDataIndex, rowNumber, useFastCopy, trimRes.copiedCount || 0, false, preDownloadedCount || 0, false, true, false, rowYtSidecarRan);
                 csInterface.evalScript(afterTrimScript, function (resStrAfterTrim) {
                     handleEvalResult(resStrAfterTrim, preDownloadedCount || 0);
                 });
@@ -4141,7 +4183,7 @@ function processNextRow() {
                     return;
                 }
                 dom.currentActionText.textContent = "Đang chèn clip dòng " + rowNumber + "...";
-                var cutScript = buildRowEvalScript(actualDataIndex, rowNumber, false, batchRes.copiedCount || 0, false, preDownloadedCount || 0, false, true);
+                var cutScript = buildRowEvalScript(actualDataIndex, rowNumber, false, batchRes.copiedCount || 0, false, preDownloadedCount || 0, false, true, false, rowYtSidecarRan);
                 csInterface.evalScript(cutScript, function (resStr2) {
                     handleEvalResult(resStr2, preDownloadedCount || 0);
                 });
@@ -4155,7 +4197,7 @@ function processNextRow() {
         setTimeout(processNextRow, 20);
     }
 
-    var rowScript = buildRowEvalScript(actualDataIndex, rowNumber, useFastCopy, 0, useEnvatoDl, 0);
+    var rowScript = buildRowEvalScript(actualDataIndex, rowNumber, useFastCopy, 0, useEnvatoDl, 0, true, true, true, false);
     csInterface.evalScript(rowScript, function (resStr) {
         handleEvalResult(resStr, 0);
     });

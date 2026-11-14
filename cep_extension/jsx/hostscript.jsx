@@ -22,7 +22,7 @@
 // ghi de ham cua panel nap truoc. Panel doi chieu bien nay de biet script dang
 // chay co dung cua no khong.
 // ============================================================================
-var IMPORTCUT_VERSION = "3.1.3";
+var IMPORTCUT_VERSION = "3.1.4";
 
 var TICKS_PER_SECOND = 254016000000;
 var MEDIA_TYPE = 4;
@@ -41,6 +41,7 @@ var _session = {
     footageFolder: null,
     downloadFolder: null,
     envatoFiles: {},
+    youtubeFiles: {},
     convertedFiles: {},
     trimmedFiles: {},
     failedImportPath: "",
@@ -199,10 +200,29 @@ function stripQuotes(s) {
 
 function firstLineOf(v) { return stripQuotes(String(v).split(/[\r\n]+/)[0]); }
 
-/** O chua DUONG DAN DAY DU toi 1 file video (khong can cot thu muc di kem). */
+/** O chua DUONG DAN DAY DU toi 1 file media cuc bo/NAS (khong can cot thu muc di kem). */
 function looksLikeFullFilePath(v) {
     var s = firstLineOf(v);
-    return looksLikePath(s) && hasVideoExtension(s);
+    if (/^https?:\/\//i.test(s)) return false;
+    return looksLikePath(s) && (hasVideoExtension(s) || isImageExtension(s));
+}
+
+function hasYouTubeOrEnvatoUrl(v) {
+    var urls = extractUrls(v);
+    for (var i = 0; i < urls.length; i++) {
+        if (isYouTubeUrl(urls[i]) || isEnvatoUrl(urls[i])) return true;
+    }
+    return false;
+}
+
+function hasDirectMediaUrl(v) {
+    var urls = extractUrls(v);
+    for (var i = 0; i < urls.length; i++) {
+        var u = urls[i];
+        var cleanU = u.split("?")[0].split("#")[0];
+        if (isYouTubeUrl(u) || isEnvatoUrl(u) || isImageUrl(u) || hasVideoExtension(cleanU)) return true;
+    }
+    return false;
 }
 
 function looksLikePath(v) {
@@ -214,10 +234,12 @@ function looksLikePath(v) {
     return false;
 }
 
-/** Gia tri o cot source co dung la thu muc/link khong (de loc ghi chu lot vao cot source). */
+/** Gia tri o cot source co dung la thu muc cuc bo/NAS khong (khong lay URL hay file le de tranh nhiem carry-forward). */
 function looksLikeFolderValue(v) {
     var s = firstLineOf(v);
     if (s === "") return false;
+    if (/^https?:\/\//i.test(s)) return false;
+    if (looksLikeFullFilePath(s)) return false;
     if (looksLikePath(s)) return true;
     return (s.indexOf("\\") !== -1 || s.indexOf("/") !== -1);
 }
@@ -286,17 +308,21 @@ function looksLikeTimecode(v) {
     return false;
 }
 
-/** Dem so o khop tung loai (path / code / time) cho tung cot. */
+/** Dem so o khop tung loai (path / code / time / url / yt) cho tung cot. */
 function scanContentScores(rows, fromRow, maxRows) {
     var numCols = 0, r, c;
     for (r = 0; r < rows.length; r++) { if (rows[r] && rows[r].length > numCols) numCols = rows[r].length; }
-    var sc = { numCols: numCols, path: [], code: [], time: [], timeRange: [], full: [] };
-    for (c = 0; c < numCols; c++) { sc.path[c] = 0; sc.code[c] = 0; sc.time[c] = 0; sc.timeRange[c] = 0; sc.full[c] = 0; }
+    var sc = { numCols: numCols, path: [], code: [], time: [], timeRange: [], full: [], url: [], yt: [] };
+    for (c = 0; c < numCols; c++) {
+        sc.path[c] = 0; sc.code[c] = 0; sc.time[c] = 0; sc.timeRange[c] = 0; sc.full[c] = 0; sc.url[c] = 0; sc.yt[c] = 0;
+    }
     var endRow = Math.min(rows.length, fromRow + maxRows);
     for (r = fromRow; r < endRow; r++) {
         var row = rows[r]; if (!row) continue;
         for (c = 0; c < row.length; c++) {
             var v = trim(row[c]); if (v === "") continue;
+            if (hasYouTubeOrEnvatoUrl(v)) sc.yt[c]++;
+            if (hasDirectMediaUrl(v)) sc.url[c]++;
             if (looksLikePath(v)) { sc.path[c]++; if (looksLikeFullFilePath(v)) sc.full[c]++; }
             else if (looksLikeCode(v)) sc.code[c]++;
             if (looksLikeTimecode(v)) sc.time[c]++;
@@ -307,6 +333,11 @@ function scanContentScores(rows, fromRow, maxRows) {
 }
 
 function sortNumAsc(a, b) { return a - b; }
+function arrContains(arr, val) {
+    if (!arr) return false;
+    for (var i = 0; i < arr.length; i++) { if (arr[i] === val) return true; }
+    return false;
+}
 
 /**
  * Gom cot thanh cac NHOM theo vi tri trai -> phai.
@@ -314,7 +345,9 @@ function sortNumAsc(a, b) { return a - b; }
  */
 function buildColumnGroups(sourceCols, codeCols, timeCols, voiceCols, content, blockedCols) {
     var groups = [], usedSrc = {}, usedTime = {}, i, j;
-    if (!codeCols || codeCols.length === 0) return groups;
+    sourceCols = sourceCols || [];
+    codeCols = codeCols || [];
+    timeCols = timeCols || [];
     var pre = [];
     for (i = 0; i < codeCols.length; i++) {
         var codeCol = codeCols[i];
@@ -336,6 +369,25 @@ function buildColumnGroups(sourceCols, codeCols, timeCols, voiceCols, content, b
         pre.push({ codeCol: codeCol, sourceCol: srcCol, fullPathCode: isFullCode,
                    start: (srcCol !== -1 && srcCol < codeCol) ? srcCol : codeCol });
     }
+
+    // Cac cot Source/Link doc lap (khong co cot Ten File di kem, vd cot "SOURCE TRAM" chua thang link YouTube/anh/folder)
+    // -> tu thanh mot nhom media doc lap de khong bao gio bi bo sot!
+    for (i = 0; i < sourceCols.length; i++) {
+        var remSrc = sourceCols[i];
+        if (usedSrc[remSrc]) continue;
+        var hasMediaData = !content || ((content.path && content.path[remSrc] >= 1) ||
+                                        (content.url && content.url[remSrc] >= 1) ||
+                                        (content.yt && content.yt[remSrc] >= 1) ||
+                                        (content.code && content.code[remSrc] >= 1));
+        if (hasMediaData) {
+            usedSrc[remSrc] = true;
+            pre.push({ codeCol: remSrc, sourceCol: -1, fullPathCode: true, start: remSrc });
+        }
+    }
+
+    if (pre.length === 0) return groups;
+    pre.sort(function (a, b) { return a.start - b.start; });
+
     // Cot da bi chiem lam source/ma file cua bat ky nhom nao -> khong the la cot timecode.
     var takenCols = {};
     for (i = 0; i < pre.length; i++) {
@@ -391,7 +443,7 @@ function groupsToCols(groups, bodyCol, headerRowIndex, byContent) {
     if (!groups || groups.length === 0) return null;
     var g1 = groups[0], g2 = (groups.length > 1) ? groups[1] : null;
     if (g1.codeCol === -1) return null;
-    // Khong co cot thu muc van hop le NEU cot file da chua duong dan day du.
+    // Khong co cot thu muc van hop le NEU cot file da chua duong dan day du / URL media.
     if (g1.sourceCol === -1 && !g1.fullPathCode) return null;
     return {
         bodyCol: bodyCol,
@@ -415,17 +467,35 @@ function detectColumnsByHeader(rows) {
             var raw = trim(row[c] || "");
             // O tieu de that su luon la nhan ngan. Duong dan / cau ghi chu dai chi la dong rac
             // dau bang - chung hay chua san chu "Source", "NAS", "time"... nen phai loai truoc.
-            if (raw === "" || raw.length > 50 || looksLikePath(raw)) continue;
+            if (raw === "" || raw.length > 50 || looksLikePath(raw) || hasYouTubeOrEnvatoUrl(raw)) continue;
             var t = normalizeHeader(raw);
             if (t === "") continue;
             if (isVoiceHeader(t)) voiceCols[c] = true;
             if (t.indexOf("tram") !== -1) tramCols[c] = true;
             if (t === "body" || t.indexOf("mach video") !== -1 || t.indexOf("noi dung") !== -1) { bodyC.push(c); continue; }
-            if (t.indexOf("time") !== -1 || t.indexOf("thoi gian") !== -1 || t.indexOf("thoi luong") !== -1) { timeC.push(c); continue; }
+            if (t.indexOf("time") !== -1 || t.indexOf("thoi gian") !== -1 || t.indexOf("thoi luong") !== -1 ||
+                t === "doan tram" || t === "doan cat") { timeC.push(c); continue; }
             if (t.indexOf("source") !== -1 || t.indexOf("thu muc") !== -1 || t.indexOf("duong dan") !== -1 ||
-                t.indexOf("folder") !== -1 || t.indexOf("nas") !== -1 || t.indexOf("path") !== -1) { srcC.push(c); continue; }
+                t.indexOf("folder") !== -1 || t.indexOf("nas") !== -1 || t.indexOf("path") !== -1 ||
+                (!voiceCols[c] && (t.indexOf("youtube") !== -1 || t.indexOf("ytb") !== -1 || t.indexOf("link") !== -1 || t === "url"))) {
+                srcC.push(c); continue;
+            }
             if (t.indexOf("ten file") !== -1 || t.indexOf("ma file") !== -1 || t.indexOf("ma so") !== -1 ||
                 t === "code" || t === "ma" || (t.indexOf("file") !== -1 && t.indexOf("source") === -1)) { codeC.push(c); continue; }
+        }
+
+        var hasHeaderSignal = (srcC.length > 0 || codeC.length > 0 || timeC.length > 0);
+        if (!hasHeaderSignal) continue;
+
+        // Neu dong tieu de da xac dinh ro, bat ky cot nao ben duoi thuc su chua link YouTube / Envato
+        // nhung tieu de dat ten tu do (vd "Minh hoa", "B-Roll", cot khong ten...) deu duoc nhan dien tu dong!
+        for (var yc = 0; yc < content.numCols; yc++) {
+            if (content.yt[yc] >= 1 && !voiceCols[yc] && !arrContains(srcC, yc) && !arrContains(codeC, yc) && !arrContains(timeC, yc) && !arrContains(bodyC, yc)) {
+                var cellHeaderRaw = (yc < row.length) ? trim(row[yc] || "") : "";
+                if (!looksLikePath(cellHeaderRaw) && !hasYouTubeOrEnvatoUrl(cellHeaderRaw)) {
+                    srcC.push(yc);
+                }
+            }
         }
 
         // --- Doi chieu voi NOI DUNG THAT: ten header co the dat sai vi tri ---
@@ -442,23 +512,23 @@ function detectColumnsByHeader(rows) {
             var tCol2 = timeC[k2];
             if (content.time[tCol2] > 0) continue;
             timeC.splice(k2, 1);
-            if (content.path[tCol2] >= 1) srcC.push(tCol2);
+            if (content.path[tCol2] >= 1 || content.yt[tCol2] >= 1) srcC.push(tCol2);
             else if (content.code[tCol2] >= 1) codeC.push(tCol2);
         }
-        // Cot "SOURCE" chua san DUONG DAN DAY DU toi file (khong co cot ma file rieng)
+        // Cot "SOURCE" chua san DUONG DAN DAY DU toi file (va khong co cot Ten File lien ke)
         // -> chinh no la cot file, mo thang duong dan do.
         for (var k3 = srcC.length - 1; k3 >= 0; k3--) {
             var fCol = srcC[k3];
-            if (content.full[fCol] >= 1) { codeC.push(fCol); srcC.splice(k3, 1); }
+            if (content.full[fCol] >= 1 && !arrContains(codeC, fCol + 1)) { codeC.push(fCol); srcC.splice(k3, 1); }
         }
-        if (codeC.length === 0 && srcC.length > 0 && content.path[srcC[0]] >= 1) {
+        if (codeC.length === 0 && srcC.length > 0 && (content.path[srcC[0]] >= 1 || content.url[srcC[0]] >= 1 || content.yt[srcC[0]] >= 1)) {
             var singleMediaCol = srcC[0];
             codeC.push(singleMediaCol);
             content.full[singleMediaCol] = Math.max(content.full[singleMediaCol] || 0, 1);
             srcC.splice(0, 1);
         }
 
-        if (codeC.length === 0) continue;
+        if (codeC.length === 0 && srcC.length === 0) continue;
         srcC.sort(sortNumAsc); codeC.sort(sortNumAsc); timeC.sort(sortNumAsc);
         // Cam do noi dung: cot noi dung/loi thoai va cot thoi luong voice-off thuan tuy
         // ("TIMEVOICE OFF", "TIME VOICE") - tru khi header co nhac toi "tram" (vd "DOAN VOICE/TRAM").
@@ -475,17 +545,25 @@ function detectColumnsByHeader(rows) {
 function detectColumnsByContent(rows) {
     var sc = scanContentScores(rows, 0, 200);
     if (sc.numCols === 0) return null;
-    var srcC = [], codeC = [], timeC = [];
-    for (var c = 0; c < sc.numCols; c++) {
+    var srcC = [], codeC = [], timeC = [], c;
+    for (c = 0; c < sc.numCols; c++) {
         var p = sc.path[c], k = sc.code[c], t = sc.time[c];
-        // Duong dan day du toi file = vua source vua ma file -> xep vao nhom cot file.
-        // Bang khong co header: doi it nhat 2 o de tranh mot o duong dan lac vao cot ghi chu
-        // bi hieu nham thanh cot file (o le van duoc nhat lai bang quet theo hang ngang).
-        if (sc.full[c] >= 2) codeC.push(c);
+        // Duong dan day du toi file hoac cot chua link YouTube / Envato / URL media -> tu no la cot media doc lap!
+        if (sc.full[c] >= 2 || sc.yt[c] >= 1 || sc.url[c] >= 2) {
+            sc.full[c] = Math.max(sc.full[c] || 0, 1);
+            codeC.push(c);
+        }
         // Chap nhan cot chi co 1 ma file neu cot ben trai la cot duong dan (cap [folder][file])
         else if (k >= 1 && k > p && (k >= 2 || (c > 0 && sc.path[c - 1] >= 1))) codeC.push(c);
         else if (p >= 1) srcC.push(c);
-        if (t >= 2) timeC.push(c);
+        if (t >= 2 || (sc.timeRange[c] >= 1 && t >= 1)) timeC.push(c);
+    }
+    if (codeC.length === 0 && srcC.length > 0) {
+        for (c = 0; c < srcC.length; c++) {
+            sc.full[srcC[c]] = Math.max(sc.full[srcC[c]] || 0, 1);
+            codeC.push(srcC[c]);
+        }
+        srcC = [];
     }
     if (codeC.length === 0) return null;
     var groups = buildColumnGroups(srcC, codeC, timeC, {}, sc, null);
@@ -496,7 +574,7 @@ function detectColumnsByContent(rows) {
         var row = rows[r]; if (!row) continue;
         var pv = (g.sourceCol !== -1 && g.sourceCol < row.length) ? trim(row[g.sourceCol]) : "";
         var kv = (g.codeCol !== -1 && g.codeCol < row.length) ? trim(row[g.codeCol]) : "";
-        if (looksLikePath(pv) || looksLikeCode(kv)) { firstDataRow = r; break; }
+        if (looksLikePath(pv) || looksLikeCode(kv) || hasYouTubeOrEnvatoUrl(pv) || hasYouTubeOrEnvatoUrl(kv) || hasDirectMediaUrl(pv) || hasDirectMediaUrl(kv)) { firstDataRow = r; break; }
     }
     // firstDataRow = 0 -> khong co dong tieu de -> headerRowIndex = -1 (khong bo sot dong dau)
     return groupsToCols(groups, -1, firstDataRow - 1, true);
@@ -624,11 +702,62 @@ function isImageUrl(url) {
     return false;
 }
 
+function getMediaDownloadDirFs() {
+    if (_session.footageFolder && _session.footageFolder.exists) return _session.footageFolder.fsName;
+    if (_session.downloadFolder && _session.downloadFolder.exists) return _session.downloadFolder.fsName;
+    var ff = getOrCreateFootageFolder((_session.config && _session.config.footageFolderName) || "Footage");
+    if (ff && ff.exists) {
+        _session.downloadFolder = ff;
+        return ff.fsName;
+    }
+    if (app.project && app.project.path) return (new File(app.project.path)).parent.fsName;
+    return Folder.temp.fsName;
+}
+
+function getYouTubeTargetInfo(url, rowNumber, kind, idx, dirFs) {
+    var vidId = getYouTubeVideoId(url);
+    var safeKey = vidId || ("row_" + rowNumber + "_" + (kind === "V2" ? "tram_" : "") + (idx + 1));
+    var baseDir = dirFs || getMediaDownloadDirFs();
+    var fileName = "yt_" + safeKey + ".mp4";
+    var destPath = baseDir + "/" + fileName;
+    return { id: safeKey, fileName: fileName, destPath: destPath, file: new File(destPath) };
+}
+
+function findCachedYouTubeFile(url, ytId, defaultDestPath) {
+    if (_session.youtubeFiles) {
+        var mapped = (url && _session.youtubeFiles[url]) || (ytId && _session.youtubeFiles[ytId]);
+        if (mapped) {
+            var mf = new File(mapped);
+            if (mf.exists && mf.length > 0) return mf;
+        }
+    }
+    if (defaultDestPath) {
+        var df = new File(defaultDestPath);
+        if (df.exists && df.length > 0) return df;
+        var validMedia = { "mp4": 1, "mkv": 1, "webm": 1, "mov": 1, "m4v": 1, "ts": 1 };
+        var baseName = df.name.replace(/\.[^.]+$/, "");
+        try {
+            var parentFiles = df.parent ? df.parent.getFiles(baseName + ".*") : null;
+            if (parentFiles) {
+                for (var fi = 0; fi < parentFiles.length; fi++) {
+                    if (parentFiles[fi] instanceof File && parentFiles[fi].length > 0 &&
+                        parentFiles[fi].name.indexOf(baseName + ".") === 0) {
+                        var fExt = getExtensionFromUrl(parentFiles[fi].name);
+                        if (validMedia[fExt]) return parentFiles[fi];
+                    }
+                }
+            }
+        } catch (eScanYt) {}
+    }
+    return null;
+}
+
 /**
  * Chay mot doan PowerShell roi CHO den khi no xong.
  * Premiere KHONG co app.system() cung nhu system.callSystem(), nen cach duy nhat
  * la ghi file .ps1 + .bat roi File.execute(), va cho script tu bao xong bang mot
- * file co. Script luon ghi file co ke ca khi loi -> khong bao gio treo het gio.
+ * file co. Boc trong try/finally de KE CA khi psBody goi exit 0 / exit 1 thi file
+ * .done van LUON duoc ghi ngay lap tuc -> khong bao gio bi treo!
  */
 function runPowerShellAndWait(psBody, timeoutMs) {
     var stamp = String(new Date().getTime()) + "_" + String(Math.floor(Math.random() * 100000));
@@ -642,8 +771,9 @@ function runPowerShellAndWait(psBody, timeoutMs) {
         "$ErrorActionPreference = 'SilentlyContinue'",
         "try {",
         psBody,
-        "} catch {}",
-        '"DONE" | Out-File -LiteralPath ' + flagQ + " -Encoding ascii",
+        "} catch {} finally {",
+        '  "DONE" | Out-File -LiteralPath ' + flagQ + " -Encoding ascii",
+        "}",
         ""
     ].join("\r\n");
 
@@ -682,34 +812,66 @@ function downloadFileFromUrl(url, destPath) {
         url = trim(url); if (url === "") return null;
         var destFile = new File(destPath);
         if (!destFile.parent.exists) destFile.parent.create();
+        var pngAltPath = destPath.replace(/\.[^.\\\/]+$/, "") + ".png";
+        var pngAltFile = new File(pngAltPath);
+        if (pngAltFile.exists && pngAltFile.length > 0 && destPath.toLowerCase().indexOf(".webp") !== -1) return pngAltFile;
         if (destFile.exists && destFile.length > 0) return destFile;
 
         function q(s) { return "'" + String(s).replace(/'/g, "''") + "'"; }
+        var destWin = destPath.replace(/\//g, "\\");
+        var pngWin = pngAltPath.replace(/\//g, "\\");
         var ps = [
             "  $u = " + q(url),
-            "  $o = " + q(destPath.replace(/\//g, "\\")),
+            "  $o = " + q(destWin),
+            "  $pngOut = " + q(pngWin),
             "  $curl = Join-Path $env:SystemRoot 'System32\\curl.exe'",
-            "  if (Test-Path -LiteralPath $curl) { & $curl -L -k -s -A 'Mozilla/5.0' -o $o $u }",
-            // Du phong khi may khong co curl hoac curl that bai
+            "  if (Test-Path -LiteralPath $curl) { & $curl -L -k -s --connect-timeout 10 --max-time 30 -A 'Mozilla/5.0' -o $o $u }",
             "  if (-not (Test-Path -LiteralPath $o) -or (Get-Item -LiteralPath $o).Length -eq 0) {",
             "    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12",
             "    $ProgressPreference = 'SilentlyContinue'",
-            "    (New-Object Net.WebClient).DownloadFile($u, $o)",
+            "    $wc = New-Object Net.WebClient",
+            "    $wc.Headers.Add('User-Agent', 'Mozilla/5.0')",
+            "    $wc.DownloadFile($u, $o)",
+            "  }",
+            "  # Neu file anh thuc chat la WebP (nhieu CDN bao chi tra WebP du duoi .jpg/.png), tu chuyen sang .png cho Premiere",
+            "  if ((Test-Path -LiteralPath $o) -and (Get-Item -LiteralPath $o).Length -gt 12) {",
+            "    $isWebp = ($o -match '\\.webp$')",
+            "    if (-not $isWebp) {",
+            "      $bytes = [System.IO.File]::ReadAllBytes($o)",
+            "      if ($bytes.Length -ge 12 -and $bytes[0] -eq 82 -and $bytes[1] -eq 73 -and $bytes[2] -eq 70 -and $bytes[3] -eq 70 -and $bytes[8] -eq 87 -and $bytes[9] -eq 69 -and $bytes[10] -eq 66 -and $bytes[11] -eq 80) { $isWebp = $true }",
+            "    }",
+            "    if ($isWebp) {",
+            "      $ff = (Get-Command ffmpeg -ErrorAction SilentlyContinue).Source",
+            "      if (-not $ff) {",
+            "        $ffCands = @(",
+            "          (Join-Path $env:LOCALAPPDATA 'AutoImportCutV3\\bin\\ffmpeg.exe'),",
+            "          (Join-Path $env:LOCALAPPDATA 'Programs\\Meowgic\\resources\\backend\\binaries\\win\\ffmpeg.exe'),",
+            "          (Join-Path $env:LOCALAPPDATA 'QuickMediaConverter\\ffmpeg.exe'),",
+            "          (Join-Path $env:APPDATA 'blinkl.io\\resources\\ffmpeg\\ffmpeg.exe')",
+            "        )",
+            "        foreach ($fc in $ffCands) { if (Test-Path -LiteralPath $fc) { $ff = $fc; break } }",
+            "      }",
+            "      if ($ff) {",
+            "        & $ff -y -i $o -frames:v 1 $pngOut 2>$null",
+            "        if ((Test-Path -LiteralPath $pngOut) -and (Get-Item -LiteralPath $pngOut).Length -gt 0 -and ($pngOut -ne $o)) {",
+            "          Remove-Item -LiteralPath $o -Force -ErrorAction SilentlyContinue",
+            "        }",
+            "      }",
+            "    }",
             "  }"
         ].join("\r\n");
 
-        runPowerShellAndWait(ps, 600000);
+        runPowerShellAndWait(ps, 45000);
+        var pChk = new File(pngAltPath);
+        if (pChk.exists && pChk.length > 0) return pChk;
         var c = new File(destPath);
         return (c.exists && c.length > 0) ? c : null;
     } catch(e) { return null; }
 }
 
 /**
- * Tai video YouTube bang yt-dlp qua PowerShell.
- * yt-dlp duoc tim trong PATH hoac thu muc Footage.
- * Neu chua cai -> tu dong tai yt-dlp.exe portable ve thu muc Footage.
- * Tra ve File object neu thanh cong, null neu that bai.
- * result.warning chua thong bao can hien (vd: dang tai yt-dlp...).
+ * Tai video YouTube bang yt-dlp qua PowerShell (du phong khi Sidecar khong chay).
+ * KHONG dung lenh exit trong PowerShell de tranh thoat som truoc khi ghi file .done.
  */
 function downloadYouTubeVideo(url, destPath) {
     try {
@@ -722,22 +884,21 @@ function downloadYouTubeVideo(url, destPath) {
         var destWin = destPath.replace(/\//g, "\\");
         var destDir = destFile.parent.fsName.replace(/\//g, "\\");
 
-        // Tim yt-dlp: trong PATH, Footage, hoac cac thu muc he thong/ung dung co san
         var ps = [
             "$ErrorActionPreference = 'Continue'",
             "$outPath = " + q(destWin),
             "$outDir = " + q(destDir),
             "$url = " + q(url),
             "",
-            "# Tim yt-dlp",
             "$ytdlp = $null",
             "$inPath = Get-Command yt-dlp -ErrorAction SilentlyContinue",
             "if ($inPath) { $ytdlp = $inPath.Source }",
             "if (-not $ytdlp) {",
             "  $candidates = @(",
+            "    (Join-Path $env:LOCALAPPDATA 'AutoImportCutV3\\bin\\yt-dlp.exe'),",
             "    (Join-Path $outDir 'yt-dlp.exe'),",
             "    (Join-Path $env:LOCALAPPDATA 'Meowgic\\binaries\\yt-dlp.exe'),",
-            "    (Join-Path $env:LOCALAPPDATA 'Meowgic\\binaries\\yt-dlp.exe'),",
+            "    (Join-Path $env:LOCALAPPDATA 'Programs\\Meowgic\\resources\\backend\\binaries\\win\\yt-dlp.exe'),",
             "    (Join-Path $env:APPDATA 'blinkl.io\\resources\\io.any-paste.blinkl\\yt-dlp\\yt-dlp.exe'),",
             "    (Join-Path $env:LOCALAPPDATA 'yt-dlp\\yt-dlp.exe')",
             "  )",
@@ -746,67 +907,63 @@ function downloadYouTubeVideo(url, destPath) {
             "  }",
             "}",
             "",
-            "# Tu dong tai yt-dlp.exe neu chua co",
             "if (-not $ytdlp) {",
-            "  $local = Join-Path $outDir 'yt-dlp.exe'",
+            "  $binDir = Join-Path $env:LOCALAPPDATA 'AutoImportCutV3\\bin'",
+            "  if (-not (Test-Path -LiteralPath $binDir)) { New-Item -ItemType Directory -Path $binDir -Force | Out-Null }",
+            "  $local = Join-Path $binDir 'yt-dlp.exe'",
             "  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12",
             "  $ProgressPreference = 'SilentlyContinue'",
             "  $dlUrl = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe'",
             "  try {",
             "    $curl = Join-Path $env:SystemRoot 'System32\\curl.exe'",
-            "    if (Test-Path -LiteralPath $curl) { & $curl -L -k -s -o $local $dlUrl }",
+            "    if (Test-Path -LiteralPath $curl) { & $curl -L -k -s --connect-timeout 10 --max-time 60 -o $local $dlUrl }",
             "    if (-not (Test-Path -LiteralPath $local) -or (Get-Item -LiteralPath $local).Length -lt 1000) {",
             "      (New-Object Net.WebClient).DownloadFile($dlUrl, $local)",
             "    }",
-            "    if (Test-Path -LiteralPath $local) { $ytdlp = $local }",
+            "    if ((Test-Path -LiteralPath $local) -and (Get-Item -LiteralPath $local).Length -gt 10000) { $ytdlp = $local }",
             "  } catch {}",
             "}",
             "",
-            "if (-not $ytdlp) { exit 1 }",
-            "",
-            "# Tim ffmpeg de hop nhat video chat luong cao nhat",
-            "$ffmpeg = $null",
-            "$inFf = Get-Command ffmpeg -ErrorAction SilentlyContinue",
-            "if ($inFf) { $ffmpeg = $inFf.Source }",
-            "if (-not $ffmpeg) {",
-            "  $ffCandidates = @(",
-            "    (Join-Path $outDir 'ffmpeg.exe'),",
-            "    (Join-Path $env:LOCALAPPDATA 'Programs\\Meowgic\\resources\\backend\\binaries\\win\\ffmpeg.exe'),",
-            "    (Join-Path $env:LOCALAPPDATA 'QuickMediaConverter\\ffmpeg.exe'),",
-            "    (Join-Path $env:APPDATA 'blinkl.io\\resources\\ffmpeg\\ffmpeg.exe')",
-            "  )",
-            "  foreach ($f in $ffCandidates) {",
-            "    if (Test-Path -LiteralPath $f) { $ffmpeg = $f; break }",
+            "if ($ytdlp) {",
+            "  $ffmpeg = $null",
+            "  $inFf = Get-Command ffmpeg -ErrorAction SilentlyContinue",
+            "  if ($inFf) { $ffmpeg = $inFf.Source }",
+            "  if (-not $ffmpeg) {",
+            "    $ffCandidates = @(",
+            "      (Join-Path $env:LOCALAPPDATA 'AutoImportCutV3\\bin\\ffmpeg.exe'),",
+            "      (Join-Path $outDir 'ffmpeg.exe'),",
+            "      (Join-Path $env:LOCALAPPDATA 'Programs\\Meowgic\\resources\\backend\\binaries\\win\\ffmpeg.exe'),",
+            "      (Join-Path $env:LOCALAPPDATA 'QuickMediaConverter\\ffmpeg.exe'),",
+            "      (Join-Path $env:APPDATA 'blinkl.io\\resources\\ffmpeg\\ffmpeg.exe')",
+            "    )",
+            "    foreach ($f in $ffCandidates) {",
+            "      if (Test-Path -LiteralPath $f) { $ffmpeg = $f; break }",
+            "    }",
+            "  }",
+            "  if ($ffmpeg) {",
+            "    & $ytdlp --no-update --no-warnings --no-playlist --ffmpeg-location $ffmpeg -S 'vcodec:h264,res,acodec:m4a' -f 'bv*[vcodec^=avc1][ext=mp4]+ba[ext=m4a]/bv*[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][ext=mp4]/bv*[vcodec^=avc1]+ba/bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b' --merge-output-format mp4 -o $outPath $url",
+            "  }",
+            "  if (-not (Test-Path -LiteralPath $outPath)) {",
+            "    & $ytdlp --no-update --no-warnings --no-playlist -S 'vcodec:h264,res,acodec:m4a' -f 'b[vcodec^=avc1][ext=mp4]/b[ext=mp4]/bv*[vcodec^=avc1][ext=mp4]/b' -o $outPath $url",
+            "  }",
+            "  if (-not (Test-Path -LiteralPath $outPath)) {",
+            "    $outTemplate = $outPath -replace '\\.[^.]+$', '.%(ext)s'",
+            "    & $ytdlp --no-update --no-warnings --no-playlist -f 'b' -o $outTemplate $url",
             "  }",
             "}",
-            "",
-            "# 1. Thu merge voi chat luong tot nhat (can ffmpeg)",
-            "if ($ffmpeg) {",
-            "  & $ytdlp --no-update --no-warnings --no-playlist --ffmpeg-location $ffmpeg -S 'vcodec:h264,res,acodec:m4a' -f 'bv*[vcodec^=avc1][ext=mp4]+ba[ext=m4a]/bv*[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][ext=mp4]/bv*[vcodec^=avc1]+ba/bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b' --merge-output-format mp4 -o $outPath $url",
-            "  if (Test-Path -LiteralPath $outPath) { exit 0 }",
-            "}",
-            "",
-            "# 2. Fallback: single stream mp4 (khong can ffmpeg)",
-            "& $ytdlp --no-update --no-warnings --no-playlist -S 'vcodec:h264,res,acodec:m4a' -f 'b[vcodec^=avc1][ext=mp4]/b[ext=mp4]/bv*[vcodec^=avc1][ext=mp4]/b' -o $outPath $url",
-            "if (Test-Path -LiteralPath $outPath) { exit 0 }",
-            "",
-            "# 3. Last resort: bat ky format nao",
-            "$outTemplate = $outPath -replace '\\.[^.]+$', '.%(ext)s'",
-            "& $ytdlp --no-update --no-warnings --no-playlist -f 'b' -o $outTemplate $url",
             ""
         ].join("\r\n");
 
-        var ok = runPowerShellAndWait(ps, 1800000);  // timeout 30 phut cho video dai
-        // Kiem tra file output: co the la .mp4, .webm, .mkv tuy format YouTube
+        runPowerShellAndWait(ps, 180000);
         var c = new File(destPath);
         if (c.exists && c.length > 0) return c;
-        // Tim file co ten tuong tu nhung khac duoi mo rong hop le (khong lay .part, .ytdl...)
         var validMedia = { "mp4": 1, "mkv": 1, "webm": 1, "mov": 1, "m4v": 1, "ts": 1 };
         var baseName = destFile.name.replace(/\.[^.]+$/, "");
         var parentFiles = destFile.parent.getFiles(baseName + ".*");
         if (parentFiles) {
             for (var fi = 0; fi < parentFiles.length; fi++) {
-                if (parentFiles[fi] instanceof File && parentFiles[fi].length > 0) {
+                if (parentFiles[fi] instanceof File && parentFiles[fi].length > 0 &&
+                    parentFiles[fi].name.indexOf(baseName + ".") === 0) {
                     var fExt = getExtensionFromUrl(parentFiles[fi].name);
                     if (validMedia[fExt]) return parentFiles[fi];
                 }
@@ -850,13 +1007,10 @@ function writeBinaryFile(path, binStr) {
 
 function getOrCreateBlackVideoItem(footageFolder) {
     try {
-        var folderPath = footageFolder ? footageFolder.fsName : (app.project.path ? new File(app.project.path).parent.fsName : Folder.temp.fsName);
+        var folderPath = (footageFolder && footageFolder.exists) ? footageFolder.fsName : getMediaDownloadDirFs();
         var blackPath = folderPath + "/Black_Video.png";
         var blackFile = new File(blackPath);
         if (!blackFile.exists || blackFile.length === 0) {
-            // Truoc day goi app.system('powershell ... WriteAllBytes') -> Premiere khong co
-            // app.system() nen dong nao co link YouTube/Envato deu lam hong ca dong.
-            // ExtendScript ghi thang duoc file nhi phan, khong can goi lenh he thong.
             var b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
             if (!writeBinaryFile(blackPath, base64ToBinaryString(b64))) return null;
         }
@@ -904,6 +1058,8 @@ function parseAllTimeRanges(str) {
     for (var li = 0; li < lines.length; li++) {
         var line = trim(lines[li]);
         if (line === "") continue;
+        // Tu sua loi go nham dau '-' thay vi ':' o moc ket thuc (vd "21:06 - 21 - 22" -> "21:06 - 21:22")
+        line = line.replace(/(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?\s*[-~\u2013\u2014]\s*\d{1,2})\s*-\s*(\d{2})\b/g, "$1:$2");
 
         // Extract all timecodes from this line (hỗ trợ cả HH:MM:SS, MM:SS, 1p22, 26s)
         var timeRegex = /(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?|\b\d{1,2}\s*[pm]\s*\d{1,2}s?\b|\b\d+\s*s\b)/gi;
@@ -1386,7 +1542,10 @@ function resolveAndImport(folderPath, code, fileCache, itemCache, footageFolder,
     }
     var fsPath = actualFile.fsName;
     var projectItem = itemCache[fsPath];
-    if (projectItem === undefined) { projectItem = importAndGetProjectItem(fsPath); itemCache[fsPath] = projectItem; }
+    if (!projectItem) {
+        projectItem = importAndGetProjectItem(fsPath);
+        if (projectItem) itemCache[fsPath] = projectItem;
+    }
     if (!projectItem) return { error: "Import th\u1ea5t b\u1ea1i: " + fsPath };
     return { projectItem: projectItem, isAmbiguous: isAmbiguous, isNewCopy: isNewCopy, matchedPath: actualFile.fsName };
 }
@@ -1426,6 +1585,7 @@ function validateOneSource(items, rowNumber, kind, folder, code, index) {
 
 function validateSourceUrls(items, rowNumber, kind, value, indexStart) {
     var urls = extractUrls(value || "");
+    var valFootDir = _session.validateFootageFolder ? _session.validateFootageFolder.fsName : "";
     for (var i = 0; i < urls.length; i++) {
         var u = urls[i];
         if (isEnvatoUrl(u)) {
@@ -1448,13 +1608,105 @@ function validateSourceUrls(items, rowNumber, kind, value, indexStart) {
                 envatoKey: envKey,
                 envatoCached: !!envCached
             });
+        } else if (isYouTubeUrl(u)) {
+            var ytInfo = getYouTubeTargetInfo(u, rowNumber, kind, i, valFootDir);
+            var ytCf = valFootDir ? findCachedYouTubeFile(u, ytInfo.id, ytInfo.destPath) : null;
+            var ytHas = !!(ytCf && ytCf.exists && ytCf.length > 0);
+            items.push({
+                id: rowNumber + "-" + kind + "-yt-" + (indexStart + i),
+                checkKey: "youtube|" + ytInfo.id,
+                rowNumber: rowNumber,
+                kind: kind,
+                mediaType: "youtube",
+                isYouTube: true,
+                ytKey: ytInfo.id,
+                ytCached: ytHas,
+                folder: ytHas ? ytCf.parent.fsName : "YouTube Video",
+                code: u,
+                requested: u,
+                displayFolder: ytHas ? (ytCf.parent.fsName + " (Đã tải sẵn trong Footage/)") : "YouTube (Tự động tải H.264 MP4 về Footage/)",
+                displayName: ytHas ? ytCf.name : (ytInfo.fileName + " ← " + u),
+                found: true,
+                foundPath: ytHas ? ytCf.fsName : u
+            });
         } else {
-            if (isYouTubeUrl(u)) { var ytId = getYouTubeVideoId(u) || u; var ytCf = (_session.validateFootageFolder && getYouTubeVideoId(u)) ? new File(_session.validateFootageFolder.fsName + "/yt_" + ytId + ".mp4") : null; var ytHas = !!(ytCf && ytCf.exists && ytCf.length > 0); items.push({ id: rowNumber + "-" + kind + "-yt-" + (indexStart + i), checkKey: "youtube|" + ytId, rowNumber: rowNumber, kind: kind, mediaType: "youtube", isYouTube: true, ytKey: ytId, ytCached: ytHas, folder: ytHas ? ytCf.parent.fsName : "YouTube Video", code: u, requested: u, displayFolder: ytHas ? (ytCf.parent.fsName + " (Đã tải sẵn trong Footage/)") : "YouTube (Tự động tải H.264 MP4 về Footage/)", displayName: ytHas ? ytCf.name : ("yt_" + ytId + ".mp4 ← " + u), found: true, foundPath: ytHas ? ytCf.fsName : u }); continue; }
-            items.push({ id: rowNumber + "-" + kind + "-url-" + (indexStart + i), rowNumber: rowNumber, kind: kind, mediaType: "nas",
-                folder: "", code: u, requested: u, displayFolder: "URL trực tiếp", displayName: u, found: true, foundPath: u });
+            items.push({
+                id: rowNumber + "-" + kind + "-url-" + (indexStart + i),
+                checkKey: "url|" + u.toLowerCase(),
+                rowNumber: rowNumber,
+                kind: kind,
+                mediaType: "nas",
+                folder: "",
+                code: u,
+                requested: u,
+                displayFolder: "URL trực tiếp",
+                displayName: u,
+                found: true,
+                foundPath: u
+            });
         }
-
     }
+}
+
+/**
+ * Thu thap URL cho V1 va V2 Tram tren 1 dong:
+ * - Lay URL tu cac cot da map (source/code cho V1, tramSource/tramCode cho V2).
+ * - Quet TOAN BO CAC COT CON LAI tren dong: bat ky o nao chua link YouTube / Envato
+ *   (du nam o cot Mo ta, Ghi chu, Doan tram hay cot khong ten) deu tu dong duoc nhan!
+ * - Phan luong thong minh: neu dong da co source V1 local/NAS hoac cot nam trong vung Tram
+ *   thi dua vao V2 Tram (khi bat Tram), nguoc lai dua thang vao V1.
+ */
+function collectRowUrlsUniversal(rawRow, cols, sourceVal, codeVal, tramSourceVal, tramCodeVal, hasLocalV1OnRow, enableTram) {
+    var v1Urls = [], tramUrls = [], seen = {}, i;
+    function addUnique(target, list) {
+        for (var k = 0; k < list.length; k++) {
+            var u = list[k];
+            if (!u || seen[u]) continue;
+            seen[u] = true;
+            target.push(u);
+        }
+    }
+    addUnique(v1Urls, extractUrls((sourceVal || "") + "\n" + (codeVal || "")));
+    if (enableTram !== false) {
+        addUnique(tramUrls, extractUrls((tramSourceVal || "") + "\n" + (tramCodeVal || "")));
+    } else if (!hasLocalV1OnRow && v1Urls.length === 0) {
+        var fbUrls = extractUrls((tramSourceVal || "") + "\n" + (tramCodeVal || ""));
+        for (i = 0; i < fbUrls.length; i++) {
+            if (isYouTubeUrl(fbUrls[i]) || isEnvatoUrl(fbUrls[i])) addUnique(v1Urls, [fbUrls[i]]);
+        }
+    }
+
+    if (rawRow && rawRow.length) {
+        var cObj = cols || {};
+        var sCol = (cObj.sourceCol !== undefined) ? cObj.sourceCol : -1;
+        var kCol = (cObj.codeCol !== undefined) ? cObj.codeCol : -1;
+        var tsCol = (cObj.tramSourceCol !== undefined) ? cObj.tramSourceCol : -1;
+        var tkCol = (cObj.tramCodeCol !== undefined) ? cObj.tramCodeCol : -1;
+        var tramStartCol = (tsCol !== -1 && tkCol !== -1) ? Math.min(tsCol, tkCol) : Math.max(tsCol, tkCol);
+
+        for (var c = 0; c < rawRow.length; c++) {
+            if (c === sCol || c === kCol || c === tsCol || c === tkCol) continue;
+            var cellStr = trim(rawRow[c] || "");
+            if (cellStr === "" || cellStr.indexOf("http") === -1) continue;
+            var extraUrls = extractUrls(cellStr);
+            for (i = 0; i < extraUrls.length; i++) {
+                var eu = extraUrls[i];
+                if (seen[eu]) continue;
+                if (!isYouTubeUrl(eu) && !isEnvatoUrl(eu)) continue;
+                var routeToTram = false;
+                if (enableTram !== false) {
+                    if (tramStartCol !== -1 && c >= tramStartCol) {
+                        routeToTram = true;
+                    } else if (hasLocalV1OnRow && v1Urls.length === 0) {
+                        routeToTram = true;
+                    }
+                }
+                if (routeToTram) addUnique(tramUrls, [eu]);
+                else addUnique(v1Urls, [eu]);
+            }
+        }
+    }
+    return { v1Urls: v1Urls, tramUrls: tramUrls };
 }
 
 function cep_validateSources(payloadJson) {
@@ -1465,13 +1717,13 @@ function cep_validateSources(payloadJson) {
         _session.missingSources = {};
         _session.validateFootageFolder = getOrCreateFootageFolder("Footage");
         out.footageFolderPath = _session.validateFootageFolder ? _session.validateFootageFolder.fsName : "";
-        var lastFolder = "", lastCode = "", lastTramFolder = "";
+        var lastFolder = "", lastCode = "", lastV1Urls = [], lastTramFolder = "";
         var headerIndex = parseInt(cols.headerRowIndex, 10);
         if (isNaN(headerIndex)) headerIndex = -1;
         var first = headerIndex + 1;
         for (var r = first; r < rows.length; r++) {
             var row = rows[r]; if (!row) continue;
-            var source = cellAt(row, cols.sourceCol), code = cellAt(row, cols.codeCol), time = cellAt(row, cols.timeCol), body = cellAt(row, cols.bodyCol);
+            var source = cellAt(row, cols.sourceCol), code = cellAt(row, cols.codeCol), time = cellAt(row, cols.timeCol);
             var tramSource = cellAt(row, cols.tramSourceCol), tramCode = cellAt(row, cols.tramCodeCol);
 
             // Chuyển folder về cột source nếu bị xếp vào code (do sheet chỉ có 1 cột Media)
@@ -1489,12 +1741,29 @@ function cep_validateSources(payloadJson) {
             if (tramCode === "" && isFullFilePath(tramSource)) tramCode = tramSource;
 
             if (looksLikeFolderValue(source)) lastFolder = source;
-            if (code !== "" && extractUrls(code).length === 0) lastCode = code;
             if (looksLikeFolderValue(tramSource)) lastTramFolder = tramSource;
 
-            // Kiểm tra dòng chỉ có link folder (không có mã file, không có URL) -> lấy ngẫu nhiên
-            var v1Urls = extractUrls(source + "\n" + code + "\n" + body);
-            var isFolderOnlyV1 = (code === "" && v1Urls.length === 0 && isFolderPath(source));
+            var directV1Urls = extractUrls(source + "\n" + code);
+            var isFolderOnlyV1 = (code === "" && directV1Urls.length === 0 && isFolderPath(source));
+            var hasNewLocalCodeV1 = (code !== "" && extractUrls(code).length === 0);
+            var hasLocalV1OnRow = isFolderOnlyV1 || hasNewLocalCodeV1 || (directV1Urls.length === 0 && time !== "" && lastCode !== "");
+
+            var rowUrlBundle = collectRowUrlsUniversal(row, cols, source, code, tramSource, tramCode, hasLocalV1OnRow, payload.enableTram !== false);
+            var v1Urls = rowUrlBundle.v1Urls;
+            var tramUrls = rowUrlBundle.tramUrls;
+
+            if (isFolderOnlyV1) {
+                lastCode = "";
+                lastV1Urls = [];
+            } else if (v1Urls.length > 0 && !hasNewLocalCodeV1) {
+                lastV1Urls = v1Urls;
+                lastCode = "";
+            } else if (hasNewLocalCodeV1) {
+                lastCode = code;
+                lastV1Urls = [];
+            } else if (v1Urls.length === 0 && code === "" && source === "" && time !== "" && lastV1Urls.length > 0 && lastCode === "") {
+                v1Urls = lastV1Urls;
+            }
 
             if (isFolderOnlyV1) {
                 var fObj = new Folder(stripQuotes(source));
@@ -1516,12 +1785,13 @@ function cep_validateSources(payloadJson) {
                     foundPath: fExists ? fObj.fsName : "", mediaType: "nas"
                 });
             } else if (v1Urls.length > 0 || code !== "" || source !== "" || time !== "") {
-                validateSourceUrls(out.items, r + 1, "V1", source + "\n" + code + "\n" + body, 1);
-                var codes = (v1Urls.length > 0 && (code === "" || extractUrls(code).length > 0)) ? [] : (isFullFilePath(lastCode) ? [lastCode] : lastCode.split(/[\r\n,;]+/));
+                if (v1Urls.length > 0) {
+                    validateSourceUrls(out.items, r + 1, "V1", v1Urls.join("\n"), 1);
+                }
+                var codes = (v1Urls.length > 0 && !hasNewLocalCodeV1) ? [] : (isFullFilePath(lastCode) ? [lastCode] : lastCode.split(/[\r\n,;]+/));
                 for (var c = 0; c < codes.length; c++) validateOneSource(out.items, r + 1, "V1", lastFolder, codes[c], c + 1);
             }
 
-            var tramUrls = extractUrls(tramSource + "\n" + tramCode);
             var isFolderOnlyV2 = (payload.enableTram !== false && tramCode === "" && tramUrls.length === 0 && isFolderPath(tramSource));
             if (isFolderOnlyV2) {
                 var tfObj = new Folder(stripQuotes(tramSource));
@@ -1541,10 +1811,21 @@ function cep_validateSources(payloadJson) {
                     found: tfExists,
                     foundPath: tfExists ? tfObj.fsName : "", mediaType: "nas"
                 });
-            } else if (payload.enableTram !== false && tramCode !== "") {
-                validateSourceUrls(out.items, r + 1, "V2", tramSource + "\n" + tramCode, 1);
-                var tramCodes = isFullFilePath(tramCode) ? [tramCode] : tramCode.split(/[\r\n,;]+/);
-                for (var t = 0; t < tramCodes.length; t++) validateOneSource(out.items, r + 1, "V2", tramSource || lastTramFolder || lastFolder, tramCodes[t], t + 1);
+            } else if (payload.enableTram !== false && (tramUrls.length > 0 || tramCode !== "")) {
+                if (tramUrls.length > 0) {
+                    validateSourceUrls(out.items, r + 1, "V2", tramUrls.join("\n"), 1);
+                }
+                if (tramCode !== "") {
+                    var tramCodes = isFullFilePath(tramCode) ? [tramCode] : tramCode.split(/[\r\n,;]+/);
+                    var tramFolderToUse = (looksLikeFolderValue(tramSource) ? tramSource : "") || lastTramFolder || lastFolder;
+                    for (var t = 0; t < tramCodes.length; t++) {
+                        var tc = stripQuotes(tramCodes[t]);
+                        if (tc === "" || /^https?:\/\//i.test(tc)) continue;
+                        // Neu dong da co URL tram (vd link anh/YouTube o cot Source Tram), bo qua chu ghi chu tieng Viet o cot Ten File
+                        if (tramUrls.length > 0 && !isFullFilePath(tc) && !looksLikeCode(tc)) continue;
+                        validateOneSource(out.items, r + 1, "V2", tramFolderToUse, tc, t + 1);
+                    }
+                }
             }
         }
         out.success = true;
@@ -1902,7 +2183,9 @@ function findFirstDataRowFor(rows, cols) {
         var codeV = cellAt(row, cols.codeCol), srcV = cellAt(row, cols.sourceCol);
         var tCodeV = cellAt(row, cols.tramCodeCol), tSrcV = cellAt(row, cols.tramSourceCol);
         if (looksLikeCode(codeV) || looksLikeFullFilePath(codeV) || looksLikePath(codeV) || looksLikePath(srcV) ||
-            looksLikeCode(tCodeV) || looksLikeFullFilePath(tCodeV) || looksLikePath(tCodeV) || looksLikePath(tSrcV)) return r;
+            hasYouTubeOrEnvatoUrl(codeV) || hasYouTubeOrEnvatoUrl(srcV) || hasDirectMediaUrl(codeV) || hasDirectMediaUrl(srcV) ||
+            looksLikeCode(tCodeV) || looksLikeFullFilePath(tCodeV) || looksLikePath(tCodeV) || looksLikePath(tSrcV) ||
+            hasYouTubeOrEnvatoUrl(tCodeV) || hasYouTubeOrEnvatoUrl(tSrcV) || hasDirectMediaUrl(tCodeV) || hasDirectMediaUrl(tSrcV)) return r;
     }
     return 0;
 }
@@ -1928,16 +2211,29 @@ function cep_parseCSVContentManual(csvContent, colsJsonStr) {
             headerRowIndex: -1,
             detectedByContent: false, detectedByManual: true
         };
-        if (cols.codeCol === -1) { res.error = "Chưa chọn cột Tên file cho Source chính (V1)"; return toJson(res); }
+        // Neu nguoi dung chon cot Folder (Source) ma de trong cot Ten file (vd cot Source chua thang link YouTube / duong dan file)
+        if (cols.codeCol === -1 && cols.sourceCol !== -1) {
+            cols.codeCol = cols.sourceCol;
+            cols.sourceCol = -1;
+            cols.fullPathCode = true;
+        }
+        if (cols.tramCodeCol === -1 && cols.tramSourceCol !== -1) {
+            cols.tramCodeCol = cols.tramSourceCol;
+            cols.tramSourceCol = -1;
+        }
+        if (cols.codeCol === -1) { res.error = "Chưa chọn cột Source hoặc Tên file cho Source chính (V1)"; return toJson(res); }
 
         var rows = parseCSV(csvContent);
         res.totalRows = rows.length;
-        // Cot file da la duong dan day du -> khong can cot Folder
+        // Cot file da la duong dan day du / link media -> khong can cot Folder
         var firstData = findFirstDataRowFor(rows, cols);
-        var fullPathCode = false;
+        var fullPathCode = !!cols.fullPathCode;
         for (var r = firstData; r < Math.min(firstData + 40, rows.length); r++) {
             var rw = rows[r];
-            if (rw && cols.codeCol < rw.length && looksLikeFullFilePath(trim(rw[cols.codeCol] || ""))) { fullPathCode = true; break; }
+            if (rw && cols.codeCol < rw.length) {
+                var cellValM = trim(rw[cols.codeCol] || "");
+                if (looksLikeFullFilePath(cellValM) || hasYouTubeOrEnvatoUrl(cellValM) || hasDirectMediaUrl(cellValM)) { fullPathCode = true; break; }
+            }
         }
         cols.fullPathCode = fullPathCode;
         cols.headerRowIndex = firstData - 1;
@@ -1970,8 +2266,17 @@ function cep_parseCSVContentWithCols(csvContent, colsJsonStr) {
             headerRowIndex: num(aiCols.headerRowIndex, -1),
             detectedByContent: false, detectedByAI: true
         };
-        // sourceCol = -1 van hop le neu cot file chua san duong dan day du (sheet kieu "Source" = ca duong dan).
-        if (cols.codeCol === -1) { res.error = "AI không xác định được cột Mã file / đường dẫn file"; return toJson(res); }
+        if (cols.codeCol === -1 && cols.sourceCol !== -1) {
+            cols.codeCol = cols.sourceCol;
+            cols.sourceCol = -1;
+            cols.fullPathCode = true;
+        }
+        if (cols.tramCodeCol === -1 && cols.tramSourceCol !== -1) {
+            cols.tramCodeCol = cols.tramSourceCol;
+            cols.tramSourceCol = -1;
+        }
+        // sourceCol = -1 van hop le neu cot file chua san duong dan day du (sheet kieu "Source" = ca duong dan / link YouTube).
+        if (cols.codeCol === -1) { res.error = "AI không xác định được cột Source / Mã file"; return toJson(res); }
 
         var rows = parseCSV(csvContent);
         res.totalRows = rows.length;
@@ -1982,21 +2287,27 @@ function cep_parseCSVContentWithCols(csvContent, colsJsonStr) {
     return toJson(res);
 }
 
-function cep_initSession(configJsonStr) {
+function cep_initSession(configJsonStr, csvContentOpt, colsJsonStrOpt) {
     var config = parseJson(configJsonStr) || {};
+    if (colsJsonStrOpt) {
+        var parsedCols = parseJson(colsJsonStrOpt);
+        if (parsedCols) config.cols = parsedCols;
+    }
     _session.config = config;
     _session.active = true;
     _session.fileCache = {}; _session.itemCache = {}; _session.durationCache = {}; _session.folderPickCache = {};
-    _session.csvRows = config.csvContent ? parseCSV(config.csvContent) : null;
-    _session.lastBody = ""; _session.lastSourceFolder = ""; _session.lastFileCode = ""; _session.lastTramFolder = "";
+    var csvStr = csvContentOpt || config.csvContent || "";
+    _session.csvRows = csvStr ? parseCSV(csvStr) : null;
+    _session.lastBody = ""; _session.lastSourceFolder = ""; _session.lastFileCode = ""; _session.lastV1Urls = []; _session.lastTramFolder = "";
     _session.timelineCursorSec = null;
     var footageFolder = null;
     if (config.enableCopyToLocal !== false) footageFolder = getOrCreateFootageFolder(config.footageFolderName || "Footage");
     _session.footageFolder = footageFolder;
     _session.downloadFolder = footageFolder || getOrCreateFootageFolder(config.footageFolderName || "Footage");
     _session.envatoFiles = {};
+    _session.youtubeFiles = {};
     _session.trimmedFiles = {};
-    return toJson({ success: true, footageFolderPath: footageFolder ? footageFolder.fsName : null });
+    return toJson({ success: true, footageFolderPath: (_session.downloadFolder ? _session.downloadFolder.fsName : (footageFolder ? footageFolder.fsName : null)) });
 }
 
 function cep_clearSourceReplacements() {
@@ -2192,15 +2503,21 @@ function cep_processSingleRow(rowJsonStr) {
         }
     }
 
-    // ---- Smart split: tách mã file khỏi timecode gộp trong cùng 1 ô ----
+    // ---- Smart split: tách mã file / link khỏi timecode gộp trong cùng 1 ô ----
     // VD: "C5439 - 02:00" -> code="C5439", embeddedTime="02:00"
     var mainSplit = splitCodeAndTimecode(codeRaw);
     if (mainSplit.embeddedTime !== "") {
-        // Nếu ô code có timecode gộp vào, tách riêng ra
-        codeRaw = mainSplit.codes;   // chỉ giữ phần mã file
-        // Dùng timecode từ ô code nếu ô time chưa có timecode thật
+        codeRaw = mainSplit.codes;
         if (timeRaw === "" || parseTimeRange(timeRaw).mode === "auto") {
             timeRaw = mainSplit.embeddedTime;
+        }
+    } else if (codeRaw === "" && extractUrls(sourceRaw).length > 0) {
+        var srcUrlSplit = splitCodeAndTimecode(sourceRaw);
+        if (srcUrlSplit.embeddedTime !== "") {
+            sourceRaw = srcUrlSplit.codes;
+            if (timeRaw === "" || parseTimeRange(timeRaw).mode === "auto") {
+                timeRaw = srcUrlSplit.embeddedTime;
+            }
         }
     }
 
@@ -2210,6 +2527,14 @@ function cep_processSingleRow(rowJsonStr) {
         tramCodeRaw = tramSplit.codes;
         if (tramTimeRaw === "" || parseTimeRange(tramTimeRaw).mode === "auto") {
             tramTimeRaw = tramSplit.embeddedTime;
+        }
+    } else if (tramCodeRaw === "" && extractUrls(tramSourceRaw).length > 0) {
+        var tSrcUrlSplit = splitCodeAndTimecode(tramSourceRaw);
+        if (tSrcUrlSplit.embeddedTime !== "") {
+            tramSourceRaw = tSrcUrlSplit.codes;
+            if (tramTimeRaw === "" || parseTimeRange(tramTimeRaw).mode === "auto") {
+                tramTimeRaw = tSrcUrlSplit.embeddedTime;
+            }
         }
     }
 
@@ -2228,32 +2553,74 @@ function cep_processSingleRow(rowJsonStr) {
     var prevLastBody = _session.lastBody;
     var prevLastSourceFolder = _session.lastSourceFolder;
     var prevLastFileCode = _session.lastFileCode;
+    var prevLastV1Urls = _session.lastV1Urls ? _session.lastV1Urls.slice(0) : [];
     var prevLastTramFolder = _session.lastTramFolder;
 
-    // Carry-forward: chi ghi nho gia tri THAT SU la duong dan.
-    // Cot source cua nhieu bang con bi dung de ghi chu ("che mat neu can"...) -> khong duoc
-    // de ghi chu do de len thu muc dang dung cho cac hang phia sau.
-    if (bodyRaw !== "") _session.lastBody = bodyRaw;
-    if (looksLikeFolderValue(sourceRaw)) _session.lastSourceFolder = sourceRaw;
-    if (codeRaw !== "" && extractUrls(codeRaw).length === 0) _session.lastFileCode = codeRaw;
-    if (looksLikeFolderValue(tramSourceRaw)) _session.lastTramFolder = tramSourceRaw;
+    function restorePrevSessionCarry() {
+        _session.lastBody = prevLastBody;
+        _session.lastSourceFolder = prevLastSourceFolder;
+        _session.lastFileCode = prevLastFileCode;
+        _session.lastV1Urls = prevLastV1Urls;
+        _session.lastTramFolder = prevLastTramFolder;
+    }
 
     // Parse tất cả time ranges (có thể nhiều dòng, mỗi dòng 1 đoạn)
     var allTimeRanges = parseAllTimeRanges(timeRaw);
     if (allTimeRanges === null) return toJson({ status: "skipped", rowNumber: rowNumber, details: "B\u1ecf qua d\u00f2ng N.A", clipCount: 0, copyCount: 0, downloadCount: 0 });
 
-    var mainUrls = extractUrls(sourceRaw + "\n" + codeRaw + "\n" + bodyRaw);
-    var isFolderOnlyV1 = (codeRaw === "" && mainUrls.length === 0 && isFolderPath(sourceRaw));
-    var hasExplicitV1 = (codeRaw !== "" || timeRaw !== "");
+    var directV1Urls = extractUrls(sourceRaw + "\n" + codeRaw);
+    var isFolderOnlyV1 = (codeRaw === "" && directV1Urls.length === 0 && isFolderPath(sourceRaw));
+    var hasNewLocalCodeV1 = (codeRaw !== "" && extractUrls(codeRaw).length === 0);
+    var hasLocalV1Base = isFolderOnlyV1 || hasNewLocalCodeV1 || (directV1Urls.length === 0 && timeRaw !== "" && prevLastFileCode !== "");
 
-    var tramUrls = extractUrls(tramSourceRaw + "\n" + tramCodeRaw);
+    var activeCols = rowData.cols || (_session.config && _session.config.cols) || {};
+    var effectiveRawRow = (rowData.rawRow && rowData.rawRow.length) ? rowData.rawRow : (bodyRaw !== "" ? [bodyRaw] : []);
+    var effectiveCols = (rowData.rawRow && rowData.rawRow.length) ? activeCols : {};
+    var rowUrlBundle = collectRowUrlsUniversal(effectiveRawRow, effectiveCols, sourceRaw, codeRaw, tramSourceRaw, tramCodeRaw, hasLocalV1Base, enableTram);
+    var mainUrls = rowUrlBundle.v1Urls;
+    var tramUrls = rowUrlBundle.tramUrls;
+
+    // Carry-forward: chi ghi nho gia tri THAT SU la thu muc cuc bo/NAS.
+    if (bodyRaw !== "") _session.lastBody = bodyRaw;
+    if (looksLikeFolderValue(sourceRaw)) _session.lastSourceFolder = sourceRaw;
+    if (looksLikeFolderValue(tramSourceRaw)) _session.lastTramFolder = tramSourceRaw;
+
+    if (isFolderOnlyV1) {
+        _session.lastFileCode = "";
+        _session.lastV1Urls = [];
+    } else if (mainUrls.length > 0 && !hasNewLocalCodeV1) {
+        _session.lastV1Urls = mainUrls.slice(0);
+        _session.lastFileCode = "";
+    } else if (hasNewLocalCodeV1) {
+        _session.lastFileCode = codeRaw;
+        _session.lastV1Urls = [];
+    } else if (mainUrls.length === 0 && codeRaw === "" && sourceRaw === "" && timeRaw !== "" && _session.lastV1Urls && _session.lastV1Urls.length > 0 && _session.lastFileCode === "") {
+        mainUrls = _session.lastV1Urls.slice(0);
+    }
+
+    var hasExplicitV1 = (codeRaw !== "" || timeRaw !== "");
     var isFolderOnlyV2 = (tramCodeRaw === "" && tramUrls.length === 0 && isFolderPath(tramSourceRaw));
     var hasTramExplicit = (tramUrls.length > 0) || (tramCodeRaw !== "") || isFolderOnlyV2;
-    var dlFolder = _session.downloadFolder || _session.footageFolder || getOrCreateFootageFolder("Footage");
+
+    // Neu Sequence chi co 1 track V1 (chua co V2) ma dong chi co URL tram (khong co V1), dua URL tram xuong V1 de khong bi bo sot
+    if (enableTram && !tramTrack && !hasExplicitV1 && mainUrls.length === 0 && !isFolderOnlyV1 && tramUrls.length > 0) {
+        mainUrls = tramUrls.slice(0);
+        tramUrls = [];
+        hasTramExplicit = false;
+    }
+
+    var mediaDlDir = getMediaDownloadDirFs();
+    var dlFolder = _session.downloadFolder || _session.footageFolder || (mediaDlDir ? new Folder(mediaDlDir) : null);
     if (rowData.envatoFiles && typeof rowData.envatoFiles === "object") {
         if (!_session.envatoFiles) _session.envatoFiles = {};
         for (var efKey in rowData.envatoFiles) {
             if (rowData.envatoFiles.hasOwnProperty(efKey)) _session.envatoFiles[efKey] = rowData.envatoFiles[efKey];
+        }
+    }
+    if (rowData.youtubeFiles && typeof rowData.youtubeFiles === "object") {
+        if (!_session.youtubeFiles) _session.youtubeFiles = {};
+        for (var yfKey in rowData.youtubeFiles) {
+            if (rowData.youtubeFiles.hasOwnProperty(yfKey)) _session.youtubeFiles[yfKey] = rowData.youtubeFiles[yfKey];
         }
     }
     if (rowData.convertedFiles && typeof rowData.convertedFiles === "object") {
@@ -2294,14 +2661,11 @@ function cep_processSingleRow(rowJsonStr) {
             }
         }
         if (pendingEnvato.length > 0) {
-            _session.lastBody = prevLastBody;
-            _session.lastSourceFolder = prevLastSourceFolder;
-            _session.lastFileCode = prevLastFileCode;
-            _session.lastTramFolder = prevLastTramFolder;
+            restorePrevSessionCarry();
             return toJson({
                 status: "need_envato_download",
                 rowNumber: rowNumber,
-                footageDir: dlFolder ? dlFolder.fsName : "",
+                footageDir: mediaDlDir,
                 downloads: pendingEnvato
             });
         }
@@ -2310,40 +2674,32 @@ function cep_processSingleRow(rowJsonStr) {
     // ---- Uu tien tai video YouTube + tu dong convert codec qua Sidecar Backend (V3) ----
     if (rowData.deferYouTube && enableYouTube) {
         var pendingYT = [], seenYTKey = {}, yti;
-        var ytFolderFsPre = _session.footageFolder ? _session.footageFolder.fsName : (dlFolder ? dlFolder.fsName : "");
         for (yti = 0; yti < mainUrls.length; yti++) {
             if (isYouTubeUrl(mainUrls[yti])) {
-                var yId1 = getYouTubeVideoId(mainUrls[yti]) || ("row_" + rowNumber + "_" + (yti + 1));
-                var yDest1 = ytFolderFsPre + "/yt_" + yId1 + ".mp4";
-                var yFile1 = new File(yDest1);
-                if (!seenYTKey[yId1] && (!yFile1.exists || yFile1.length === 0)) {
-                    seenYTKey[yId1] = true;
-                    pendingYT.push({ url: mainUrls[yti], id: yId1, destPath: yFile1.fsName, kind: "V1" });
+                var ytPre1 = getYouTubeTargetInfo(mainUrls[yti], rowNumber, "V1", yti, mediaDlDir);
+                if (!seenYTKey[ytPre1.id] && !findCachedYouTubeFile(mainUrls[yti], ytPre1.id, ytPre1.destPath)) {
+                    seenYTKey[ytPre1.id] = true;
+                    pendingYT.push({ url: mainUrls[yti], id: ytPre1.id, destPath: ytPre1.file.fsName, kind: "V1" });
                 }
             }
         }
         if (enableTram && tramTrack && hasTramExplicit && parseTimeRange(tramTimeRaw) !== null) {
             for (yti = 0; yti < tramUrls.length; yti++) {
                 if (isYouTubeUrl(tramUrls[yti])) {
-                    var yId2 = getYouTubeVideoId(tramUrls[yti]) || ("row_" + rowNumber + "_tram_" + (yti + 1));
-                    var yDest2 = ytFolderFsPre + "/yt_" + yId2 + ".mp4";
-                    var yFile2 = new File(yDest2);
-                    if (!seenYTKey[yId2] && (!yFile2.exists || yFile2.length === 0)) {
-                        seenYTKey[yId2] = true;
-                        pendingYT.push({ url: tramUrls[yti], id: yId2, destPath: yFile2.fsName, kind: "V2" });
+                    var ytPre2 = getYouTubeTargetInfo(tramUrls[yti], rowNumber, "V2", yti, mediaDlDir);
+                    if (!seenYTKey[ytPre2.id] && !findCachedYouTubeFile(tramUrls[yti], ytPre2.id, ytPre2.destPath)) {
+                        seenYTKey[ytPre2.id] = true;
+                        pendingYT.push({ url: tramUrls[yti], id: ytPre2.id, destPath: ytPre2.file.fsName, kind: "V2" });
                     }
                 }
             }
         }
         if (pendingYT.length > 0) {
-            _session.lastBody = prevLastBody;
-            _session.lastSourceFolder = prevLastSourceFolder;
-            _session.lastFileCode = prevLastFileCode;
-            _session.lastTramFolder = prevLastTramFolder;
+            restorePrevSessionCarry();
             return toJson({
                 status: "need_youtube_download",
                 rowNumber: rowNumber,
-                footageDir: ytFolderFsPre,
+                footageDir: mediaDlDir,
                 downloads: pendingYT
             });
         }
@@ -2415,7 +2771,7 @@ function cep_processSingleRow(rowJsonStr) {
                 }
             } else if (tramCodeRaw !== "" && parseTimeRange(tramTimeRaw) !== null) {
                 var preTramTime = parseTimeRange(tramTimeRaw);
-                var preSrc2 = (tramSourceRaw !== "") ? tramSourceRaw : (_session.lastTramFolder !== "" ? _session.lastTramFolder : _session.lastSourceFolder);
+                var preSrc2 = (looksLikeFolderValue(tramSourceRaw) ? tramSourceRaw : "") || _session.lastTramFolder || _session.lastSourceFolder;
                 var preParsed2 = parseRowFileCodes(tramCodeRaw);
                 for (ci = 0; ci < preParsed2.fileCodes.length; ci++) {
                     var rf2 = resolveSourceFileOnly(preSrc2, preParsed2.fileCodes[ci], _session.fileCache);
@@ -2427,10 +2783,7 @@ function cep_processSingleRow(rowJsonStr) {
         }
 
         if (pendingTrims.length > 0 && rowData.deferTrimCopy !== false) {
-            _session.lastBody = prevLastBody;
-            _session.lastSourceFolder = prevLastSourceFolder;
-            _session.lastFileCode = prevLastFileCode;
-            _session.lastTramFolder = prevLastTramFolder;
+            restorePrevSessionCarry();
             return toJson({
                 status: "need_trim_copy",
                 rowNumber: rowNumber,
@@ -2460,10 +2813,7 @@ function cep_processSingleRow(rowJsonStr) {
                 }
             }
             if (pendingCopies.length > 0) {
-                _session.lastBody = prevLastBody;
-                _session.lastSourceFolder = prevLastSourceFolder;
-                _session.lastFileCode = prevLastFileCode;
-                _session.lastTramFolder = prevLastTramFolder;
+                restorePrevSessionCarry();
                 return toJson({ status: "need_copy", rowNumber: rowNumber, copies: pendingCopies });
             }
         }
@@ -2495,47 +2845,79 @@ function cep_processSingleRow(rowJsonStr) {
             var currentUrl = mainUrls[uIdx];
             var subSuffix = (mainUrls.length > 1) ? ("." + (uIdx+1)) : "";
             var clipLabel = labelEnabled ? (baseLabel + subSuffix) : null;
-            // FIX: truoc day dung bien timeRangeInfo cua nhanh khac (luc nay con undefined)
-            // -> moi dong co link YouTube/Envato deu bao loi va khong chen duoc gi.
-            var urlRange = (allTimeRanges && allTimeRanges.length > 0) ? allTimeRanges[0] : { mode: "auto" };
-            var clipDur = (urlRange.mode === "full") ? (urlRange.outSec - urlRange.inSec) : defaultDuration;
+            var urlRange = (allTimeRanges && uIdx < allTimeRanges.length) ? allTimeRanges[uIdx] : ((allTimeRanges && allTimeRanges.length > 0) ? allTimeRanges[0] : { mode: "auto" });
+            var clipDur = (urlRange.mode === "full" || urlRange.mode === "reversed") ? (urlRange.outSec - urlRange.inSec) : defaultDuration;
 
             if (isYouTubeUrl(currentUrl)) {
                 if (!enableYouTube) { skippedTypes.push("YouTube"); continue; }
-                // === YOUTUBE: tai video bang yt-dlp ===
-                var ytVidId = getYouTubeVideoId(currentUrl); var ytFileName = ytVidId ? ("yt_" + ytVidId + ".mp4") : (rowNumber + subSuffix + ".mp4");
-                var ytFolderFs = _session.footageFolder ? _session.footageFolder.fsName : (new File(app.project.path).parent.fsName);
-                var ytDestPath = ytFolderFs + "/" + ytFileName;
-                var ytExistedBefore = (new File(ytDestPath)).exists; var ytDownloaded = downloadYouTubeVideo(currentUrl, ytDestPath);
+                // === YOUTUBE V1: uu tien lay file da tai qua Sidecar trong Footage/ ===
+                var ytInfoV1 = getYouTubeTargetInfo(currentUrl, rowNumber, "V1", uIdx, mediaDlDir);
+                var ytCachedV1 = findCachedYouTubeFile(currentUrl, ytInfoV1.id, ytInfoV1.destPath);
+                var ytDownloaded = ytCachedV1 || (!rowData.ytSidecarRan ? downloadYouTubeVideo(currentUrl, ytInfoV1.destPath) : null);
                 if (ytDownloaded) {
-                    if (!ytExistedBefore) downloadsDone++;
-                    var ytFsPath = ytDownloaded.fsName; var ytMediaItem = _session.itemCache[ytFsPath]; if (ytMediaItem === undefined) { ytMediaItem = importAndGetProjectItem(ytFsPath); _session.itemCache[ytFsPath] = ytMediaItem; }
-                    if (_session.failedImportPath && rowData.allowConvertRetry !== false) { _session.lastBody = prevLastBody; _session.lastSourceFolder = prevLastSourceFolder; _session.lastFileCode = prevLastFileCode; _session.lastTramFolder = prevLastTramFolder; return toJson({ status: "need_codec_convert", rowNumber: rowNumber, filePath: _session.failedImportPath, footageDir: dlFolder ? dlFolder.fsName : "" }); }
+                    if (!ytCachedV1) downloadsDone++;
+                    var ytFsPath = ytDownloaded.fsName;
+                    var ytMediaItem = _session.itemCache[ytFsPath];
+                    if (!ytMediaItem) {
+                        ytMediaItem = importAndGetProjectItem(ytFsPath);
+                        if (ytMediaItem) _session.itemCache[ytFsPath] = ytMediaItem;
+                    }
+                    if (_session.failedImportPath && rowData.allowConvertRetry !== false) {
+                        restorePrevSessionCarry();
+                        return toJson({ status: "need_codec_convert", rowNumber: rowNumber, filePath: _session.failedImportPath, footageDir: mediaDlDir });
+                    }
                     if (!ytMediaItem) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Import YouTube thất bại: " + ytDownloaded.fsName });
                     try {
                         waitForMediaReady(ytMediaItem, 10000);
                         var ytTotalDur = getProjectItemDuration(ytMediaItem);
-                        var ytInSec = 0, ytOutSec;
-                        var ytNorm = resolveNormalizedTimeRange(urlRange, ytTotalDur, defaultDuration); if (ytNorm) { ytInSec = ytNorm.inSec; ytOutSec = ytNorm.outSec; } else if (urlRange.mode === "full" || urlRange.mode === "reversed") { ytInSec = urlRange.inSec; ytOutSec = urlRange.outSec; }
-                        else if (urlRange.mode === "start") {
-                            var ytSingleDur = singleTimeEnabled ? singleTimeDuration : defaultDuration;
-                            if (singleTimeMode === "before") { ytInSec = Math.max(0, urlRange.inSec - ytSingleDur); ytOutSec = urlRange.inSec; }
-                            else { ytInSec = Math.max(0, urlRange.inSec); ytOutSec = ytInSec + ytSingleDur; if (ytTotalDur !== null && ytTotalDur > ytInSec) ytOutSec = Math.min(ytOutSec, ytTotalDur); }
+                        var ytRangesToCut = (mainUrls.length === 1 && allTimeRanges && allTimeRanges.length > 1) ? allTimeRanges : [urlRange];
+                        for (var yri = 0; yri < ytRangesToCut.length; yri++) {
+                            var curYtRange = ytRangesToCut[yri];
+                            var ytRangeSuffix = (ytRangesToCut.length > 1) ? ("-" + (yri + 1)) : "";
+                            var curYtLabel = labelEnabled ? (baseLabel + subSuffix + ytRangeSuffix) : null;
+                            var ytInSec = 0, ytOutSec;
+                            var ytNorm = resolveNormalizedTimeRange(curYtRange, ytTotalDur, defaultDuration);
+                            if (ytNorm) {
+                                ytInSec = ytNorm.inSec; ytOutSec = ytNorm.outSec;
+                            } else if (curYtRange.mode === "full" || curYtRange.mode === "reversed") {
+                                ytInSec = curYtRange.inSec; ytOutSec = curYtRange.outSec;
+                                if (curYtRange.mode === "reversed") {
+                                    warnings.push("Timecode YouTube bị nhập ngược tại dòng " + rowNumber + ": đã tự sửa");
+                                }
+                                if (ytTotalDur !== null && ytTotalDur > 0 && ytInSec >= ytTotalDur) {
+                                    var reqSpanYT = Math.max(0.5, ytOutSec - ytInSec);
+                                    ytInSec = 0;
+                                    ytOutSec = Math.min(ytTotalDur, reqSpanYT);
+                                    warnings.push("Timecode dòng " + rowNumber + " vượt quá độ dài video YouTube (" + ytTotalDur.toFixed(1) + "s) → tự lấy " + ytOutSec.toFixed(1) + "s từ đầu video");
+                                } else if (ytTotalDur !== null && ytTotalDur > ytInSec && ytOutSec > ytTotalDur) {
+                                    ytOutSec = ytTotalDur;
+                                }
+                            } else if (curYtRange.mode === "start") {
+                                var ytSingleDur = singleTimeEnabled ? singleTimeDuration : defaultDuration;
+                                if (singleTimeMode === "before") { ytInSec = Math.max(0, curYtRange.inSec - ytSingleDur); ytOutSec = curYtRange.inSec; }
+                                else { ytInSec = Math.max(0, curYtRange.inSec); ytOutSec = ytInSec + ytSingleDur; if (ytTotalDur !== null && ytTotalDur > ytInSec) ytOutSec = Math.min(ytOutSec, ytTotalDur); }
+                                if (ytTotalDur !== null && ytTotalDur > 0 && ytInSec >= ytTotalDur) {
+                                    ytInSec = 0; ytOutSec = Math.min(ytTotalDur, ytSingleDur);
+                                }
+                            } else {
+                                if (noTimecodeMode === "full" && ytTotalDur !== null && ytTotalDur > 0) { ytInSec = 0; ytOutSec = ytTotalDur; }
+                                else if (ytTotalDur === null || ytTotalDur <= 0) { ytInSec = 0; ytOutSec = noTimecodeDuration; }
+                                else if (ytTotalDur <= noTimecodeDuration) { ytInSec = 0; ytOutSec = ytTotalDur; }
+                                else { var ytMid = ytTotalDur / 2; ytInSec = ytMid - noTimecodeDuration / 2; ytOutSec = ytMid + noTimecodeDuration / 2; }
+                            }
+                            ytMediaItem.setInPoint(Math.round(ytInSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                            ytMediaItem.setOutPoint(Math.round(ytOutSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
+                            var insertPosYT = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
+                            var roseYT = (curYtRange.mode === "auto" || curYtRange.mode === "start" || curYtRange.mode === "reversed");
+                            var resYT = insertAndRenameClip(mainTrack, ytMediaItem, insertPosYT, curYtLabel, ytOutSec - ytInSec, roseYT);
+                            if (resYT.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: resYT.error });
+                            if (resYT.warning) warnings.push(resYT.warning);
+                            clipsInserted++; v1ClipDuration += (ytOutSec - ytInSec);
+                            actions.push("YouTube V1 " + (curYtLabel || ytDownloaded.name) + " (" + (ytOutSec - ytInSec).toFixed(1) + "s)");
                         }
-                        else if (ytTotalDur !== null && ytTotalDur > 0) { ytOutSec = ytTotalDur; }
-                        else { ytOutSec = clipDur; }
-                        ytMediaItem.setInPoint(Math.round(ytInSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
-                        ytMediaItem.setOutPoint(Math.round(ytOutSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
-                        var insertPosYT = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
-                        var resYT = insertAndRenameClip(mainTrack, ytMediaItem, insertPosYT, clipLabel, ytOutSec - ytInSec, false);
-                        if (resYT.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: resYT.error });
-                        if (resYT.warning) warnings.push(resYT.warning);
-                        clipsInserted++; v1ClipDuration += (ytOutSec - ytInSec);
-                        actions.push("YouTube V1 " + (clipLabel || ytFileName) + " (" + (ytOutSec - ytInSec).toFixed(1) + "s)");
                     } catch(eYT) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Lỗi chèn YouTube: " + eYT.toString() }); }
                 } else {
-                    // Fallback: yt-dlp that bai -> chen Black Video placeholder
-                    warnings.push("Không tải được YouTube (cần cài yt-dlp): " + currentUrl + " → dùng Black Video");
+                    warnings.push("Không tải được YouTube: " + currentUrl + " → dùng Black Video tạm");
                     var blackItem = getOrCreateBlackVideoItem(_session.footageFolder);
                     if (blackItem) {
                         try {
@@ -2543,7 +2925,7 @@ function cep_processSingleRow(rowJsonStr) {
                             blackItem.setOutPoint(Math.round(clipDur * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
                             var insertPosB = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
                             var resB = insertAndRenameClip(mainTrack, blackItem, insertPosB, clipLabel, clipDur, true);
-                            if (!resB.error) { clipsInserted++; v1ClipDuration = clipDur; }
+                            if (!resB.error) { clipsInserted++; v1ClipDuration += clipDur; }
                         } catch(eB) {}
                     }
                 }
@@ -2555,11 +2937,11 @@ function cep_processSingleRow(rowJsonStr) {
                 if (envFileV1 && envFileV1.exists) {
                     var envFsPath = envFileV1.fsName;
                     var envProjectItem = _session.itemCache[envFsPath];
-                    if (envProjectItem === undefined) {
+                    if (!envProjectItem) {
                         envProjectItem = importAndGetProjectItem(envFsPath);
-                        _session.itemCache[envFsPath] = envProjectItem;
+                        if (envProjectItem) _session.itemCache[envFsPath] = envProjectItem;
                     }
-                    if (_session.failedImportPath && rowData.allowConvertRetry !== false) { _session.lastBody = prevLastBody; _session.lastSourceFolder = prevLastSourceFolder; _session.lastFileCode = prevLastFileCode; _session.lastTramFolder = prevLastTramFolder; return toJson({ status: "need_codec_convert", rowNumber: rowNumber, filePath: _session.failedImportPath, footageDir: dlFolder ? dlFolder.fsName : "" }); }
+                    if (_session.failedImportPath && rowData.allowConvertRetry !== false) { restorePrevSessionCarry(); return toJson({ status: "need_codec_convert", rowNumber: rowNumber, filePath: _session.failedImportPath, footageDir: mediaDlDir }); }
                     if (!envProjectItem) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Import Envato thất bại: " + envFsPath });
                     try {
                         waitForMediaReady(envProjectItem, 10000);
@@ -2612,31 +2994,18 @@ function cep_processSingleRow(rowJsonStr) {
                         var resEnv = insertAndRenameClip(mainTrack, blackItemEnv, insertPosEnv, clipLabel, clipDur, urlRange.mode !== "full");
                         if (resEnv.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: resEnv.error });
                         if (resEnv.warning) warnings.push(resEnv.warning);
-                        clipsInserted++; v1ClipDuration = clipDur;
+                        clipsInserted++; v1ClipDuration += clipDur;
                         actions.push("Black Video (Envato) " + (clipLabel || rowNumber));
                     } catch(eEnv) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Lỗi chèn Black Video: " + eEnv.toString() }); }
                 }
-                if (false) {
-                var blackItemEnv = getOrCreateBlackVideoItem(_session.footageFolder);
-                if (!blackItemEnv) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Không tạo được Black Video" });
-                try {
-                    blackItemEnv.setInPoint("0", MEDIA_TYPE);
-                    blackItemEnv.setOutPoint(Math.round(clipDur * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
-                    var insertPosEnv = (clipsInserted === 0) ? rowStartTime : Math.max(rowStartTime, getTrackEndSeconds(mainTrack));
-                    var resEnv = insertAndRenameClip(mainTrack, blackItemEnv, insertPosEnv, clipLabel, clipDur, urlRange.mode !== "full");
-                    if (resEnv.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: resEnv.error });
-                    if (resEnv.warning) warnings.push(resEnv.warning);
-                    clipsInserted++; v1ClipDuration = clipDur;
-                    actions.push("Black Video (Envato) " + (clipLabel || rowNumber));
-                } catch(eEnv) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Lỗi chèn Black Video: " + eEnv.toString() }); } }
             } else {
                 var ext = getExtensionFromUrl(currentUrl);
                 var localFileName = rowNumber + subSuffix + "." + ext;
-                var folderFs = _session.footageFolder ? _session.footageFolder.fsName : (new File(app.project.path).parent.fsName);
-                var localDestPath = folderFs + "/" + localFileName;
+                var localDestPath = mediaDlDir + "/" + localFileName;
+                var directExistedBefore = (new File(localDestPath)).exists;
                 var downloadedFile = downloadFileFromUrl(currentUrl, localDestPath);
                 if (!downloadedFile) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Không tải được file từ link: " + currentUrl });
-                downloadsDone++;
+                if (!directExistedBefore) downloadsDone++;
                 var mediaItem = importAndGetProjectItem(downloadedFile.fsName);
                 if (!mediaItem) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Import thất bại: " + downloadedFile.fsName });
                 try {
@@ -2646,8 +3015,8 @@ function cep_processSingleRow(rowJsonStr) {
                     var resM = insertAndRenameClip(mainTrack, mediaItem, insertPosM, clipLabel, clipDur, urlRange.mode !== "full");
                     if (resM.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: resM.error });
                     if (resM.warning) warnings.push(resM.warning);
-                    clipsInserted++; v1ClipDuration = clipDur;
-                    actions.push("Đã tải " + localFileName + " (" + clipDur + "s)");
+                    clipsInserted++; v1ClipDuration += clipDur;
+                    actions.push("Đã tải " + downloadedFile.name + " (" + clipDur + "s)");
                 } catch(eM) { return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Lỗi chèn media: " + eM.toString() }); }
             }
         }
@@ -2741,11 +3110,11 @@ function cep_processSingleRow(rowJsonStr) {
                 if (v1TrimInfo && v1TrimInfo.filePath && (new File(v1TrimInfo.filePath)).exists) {
                     var trimFsV1 = v1TrimInfo.filePath;
                     activeProjectItem = _session.itemCache[trimFsV1];
-                    if (activeProjectItem === undefined) {
+                    if (!activeProjectItem) {
                         activeProjectItem = importAndGetProjectItem(trimFsV1);
-                        _session.itemCache[trimFsV1] = activeProjectItem;
+                        if (activeProjectItem) _session.itemCache[trimFsV1] = activeProjectItem;
                     }
-                    if (_session.failedImportPath && rowData.allowConvertRetry !== false) { _session.lastBody = prevLastBody; _session.lastSourceFolder = prevLastSourceFolder; _session.lastFileCode = prevLastFileCode; _session.lastTramFolder = prevLastTramFolder; return toJson({ status: "need_codec_convert", rowNumber: rowNumber, filePath: _session.failedImportPath, footageDir: dlFolder ? dlFolder.fsName : "" }); }
+                    if (_session.failedImportPath && rowData.allowConvertRetry !== false) { restorePrevSessionCarry(); return toJson({ status: "need_codec_convert", rowNumber: rowNumber, filePath: _session.failedImportPath, footageDir: mediaDlDir }); }
                     if (!activeProjectItem) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: "Import file cắt gọn thất bại: " + trimFsV1 });
                     inSec = v1TrimInfo.localInSec;
                     outSec = v1TrimInfo.localOutSec;
@@ -2757,7 +3126,7 @@ function cep_processSingleRow(rowJsonStr) {
                 } else {
                     if (!fullMainResult) {
                         fullMainResult = resolveAndImport(sourceToUse, currentCode, _session.fileCache, _session.itemCache, _session.footageFolder, enableCopy);
-                        if (_session.failedImportPath && rowData.allowConvertRetry !== false) { _session.lastBody = prevLastBody; _session.lastSourceFolder = prevLastSourceFolder; _session.lastFileCode = prevLastFileCode; _session.lastTramFolder = prevLastTramFolder; return toJson({ status: "need_codec_convert", rowNumber: rowNumber, filePath: _session.failedImportPath, footageDir: dlFolder ? dlFolder.fsName : "" }); }
+                        if (_session.failedImportPath && rowData.allowConvertRetry !== false) { restorePrevSessionCarry(); return toJson({ status: "need_codec_convert", rowNumber: rowNumber, filePath: _session.failedImportPath, footageDir: mediaDlDir }); }
                         if (fullMainResult.error) return toJson({ status: "error", rowNumber: rowNumber, errorMsg: fullMainResult.error });
                         if (fullMainResult.isNewCopy) copiesDone++;
                     }
@@ -2844,27 +3213,48 @@ function cep_processSingleRow(rowJsonStr) {
 
                 if (isYouTubeUrl(tUrl)) {
                     if (!enableYouTube) { skippedTypes.push("YouTube Trám"); continue; }
-                    // === YOUTUBE TRAM: tai video bang yt-dlp ===
-                    var ytTramVidId = getYouTubeVideoId(tUrl); var ytTramName = ytTramVidId ? ("yt_" + ytTramVidId + ".mp4") : (rowNumber + "_Tram" + tSubSuffix + ".mp4");
-                    var ytTramDir = _session.footageFolder ? _session.footageFolder.fsName : (new File(app.project.path).parent.fsName);
-                    var ytTramDest = ytTramDir + "/" + ytTramName;
-                    var ytTramExisted = (new File(ytTramDest)).exists; var ytTramFile = downloadYouTubeVideo(tUrl, ytTramDest);
+                    // === YOUTUBE TRAM: uu tien lay file da tai qua Sidecar trong Footage/ ===
+                    var ytInfoV2 = getYouTubeTargetInfo(tUrl, rowNumber, "V2", tuIdx, mediaDlDir);
+                    var ytTramCached = findCachedYouTubeFile(tUrl, ytInfoV2.id, ytInfoV2.destPath);
+                    var ytTramFile = ytTramCached || (!rowData.ytSidecarRan ? downloadYouTubeVideo(tUrl, ytInfoV2.destPath) : null);
                     if (ytTramFile) {
-                        if (typeof ytTramExisted === "undefined" || !ytTramExisted) downloadsDone++;
-                        var ytTramFs = ytTramFile.fsName; var ytTramMedia = _session.itemCache[ytTramFs]; if (ytTramMedia === undefined) { ytTramMedia = importAndGetProjectItem(ytTramFs); _session.itemCache[ytTramFs] = ytTramMedia; }
+                        if (!ytTramCached) downloadsDone++;
+                        var ytTramFs = ytTramFile.fsName;
+                        var ytTramMedia = _session.itemCache[ytTramFs];
+                        if (!ytTramMedia) {
+                            ytTramMedia = importAndGetProjectItem(ytTramFs);
+                            if (ytTramMedia) _session.itemCache[ytTramFs] = ytTramMedia;
+                        }
                         if (ytTramMedia) {
                             try {
                                 waitForMediaReady(ytTramMedia, 10000);
                                 var ytTramTotalDur = getProjectItemDuration(ytTramMedia);
                                 var ytTramInSec = 0, ytTramOutSec;
-                        var ytTramNorm = resolveNormalizedTimeRange(tramTimeInfo, ytTramTotalDur, defaultDuration); if (ytTramNorm) { ytTramInSec = ytTramNorm.inSec; ytTramOutSec = ytTramNorm.outSec; } else if (tramTimeInfo.mode === "full" || tramTimeInfo.mode === "reversed") { ytTramInSec = tramTimeInfo.inSec; ytTramOutSec = tramTimeInfo.outSec; }
-                                else if (tramTimeInfo.mode === "start") {
+                                var ytTramNorm = resolveNormalizedTimeRange(tramTimeInfo, ytTramTotalDur, defaultDuration);
+                                if (ytTramNorm) {
+                                    ytTramInSec = ytTramNorm.inSec; ytTramOutSec = ytTramNorm.outSec;
+                                } else if (tramTimeInfo.mode === "full" || tramTimeInfo.mode === "reversed") {
+                                    ytTramInSec = tramTimeInfo.inSec; ytTramOutSec = tramTimeInfo.outSec;
+                                    if (ytTramTotalDur !== null && ytTramTotalDur > 0 && ytTramInSec >= ytTramTotalDur) {
+                                        var reqTramSpan = Math.max(0.5, ytTramOutSec - ytTramInSec);
+                                        ytTramInSec = 0;
+                                        ytTramOutSec = Math.min(ytTramTotalDur, reqTramSpan);
+                                    } else if (ytTramTotalDur !== null && ytTramTotalDur > ytTramInSec && ytTramOutSec > ytTramTotalDur) {
+                                        ytTramOutSec = ytTramTotalDur;
+                                    }
+                                } else if (tramTimeInfo.mode === "start") {
                                     var ytTramSingleDur = singleTimeEnabled ? singleTimeDuration : defaultDuration;
                                     if (singleTimeMode === "before") { ytTramInSec = Math.max(0, tramTimeInfo.inSec - ytTramSingleDur); ytTramOutSec = tramTimeInfo.inSec; }
                                     else { ytTramInSec = Math.max(0, tramTimeInfo.inSec); ytTramOutSec = ytTramInSec + ytTramSingleDur; if (ytTramTotalDur !== null && ytTramTotalDur > ytTramInSec) ytTramOutSec = Math.min(ytTramOutSec, ytTramTotalDur); }
+                                    if (ytTramTotalDur !== null && ytTramTotalDur > 0 && ytTramInSec >= ytTramTotalDur) {
+                                        ytTramInSec = 0; ytTramOutSec = Math.min(ytTramTotalDur, ytTramSingleDur);
+                                    }
+                                } else {
+                                    if (noTimecodeMode === "full" && ytTramTotalDur !== null && ytTramTotalDur > 0) { ytTramInSec = 0; ytTramOutSec = ytTramTotalDur; }
+                                    else if (ytTramTotalDur === null || ytTramTotalDur <= 0) { ytTramInSec = 0; ytTramOutSec = tClipDur; }
+                                    else if (ytTramTotalDur <= noTimecodeDuration) { ytTramInSec = 0; ytTramOutSec = ytTramTotalDur; }
+                                    else { var ytTMid = ytTramTotalDur / 2; ytTramInSec = ytTMid - noTimecodeDuration / 2; ytTramOutSec = ytTMid + noTimecodeDuration / 2; }
                                 }
-                                else if (ytTramTotalDur !== null && ytTramTotalDur > 0) { ytTramOutSec = Math.min(ytTramTotalDur, tClipDur); }
-                                else { ytTramOutSec = tClipDur; }
                                 var ytTramActualDur = ytTramOutSec - ytTramInSec;
                                 if (v1ClipDuration > 0) {
                                     var remV1 = Math.max(0, (rowStartTime + v1ClipDuration) - tramInsertPos);
@@ -2874,17 +3264,21 @@ function cep_processSingleRow(rowJsonStr) {
                                 }
                                 ytTramMedia.setInPoint(Math.round(ytTramInSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
                                 ytTramMedia.setOutPoint(Math.round(ytTramOutSec * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
-                                var resYTT = insertAndRenameClip(tramTrack, ytTramMedia, tramInsertPos, tramClipLabel, ytTramActualDur, false);
+                                var roseTramYT = (tramTimeInfo.mode === "auto" || tramTimeInfo.mode === "start" || tramTimeInfo.mode === "reversed");
+                                var resYTT = insertAndRenameClip(tramTrack, ytTramMedia, tramInsertPos, tramClipLabel, ytTramActualDur, roseTramYT);
                                 if (!resYTT.error) {
                                     tramInserted++;
                                     tramInsertPos += (resYTT.actualDur > 0 ? resYTT.actualDur : ytTramActualDur);
-                                    actions.push("Tr\u00e1m V2 YouTube " + ytTramName + " (" + ytTramActualDur.toFixed(1) + "s)");
+                                    actions.push("Tr\u00e1m V2 YouTube " + ytTramFile.name + " (" + ytTramActualDur.toFixed(1) + "s)");
+                                } else {
+                                    warnings.push("L\u1ed7i ch\u00e8n YouTube tr\u00e1m: " + resYTT.error);
                                 }
                             } catch(eYTT) { warnings.push("L\u1ed7i ch\u00e8n YouTube tr\u00e1m: " + eYTT.toString()); }
+                        } else {
+                            warnings.push("Import YouTube tr\u00e1m th\u1ea5t b\u1ea1i: " + ytTramFs);
                         }
                     } else {
-                        // Fallback: Black Video
-                        warnings.push("Kh\u00f4ng t\u1ea3i \u0111\u01b0\u1ee3c YouTube tr\u00e1m (c\u1ea7n yt-dlp): " + tUrl + " \u2192 d\u00f9ng Black Video");
+                        warnings.push("Kh\u00f4ng t\u1ea3i \u0111\u01b0\u1ee3c YouTube tr\u00e1m: " + tUrl + " \u2192 d\u00f9ng Black Video t\u1ea1m");
                         var tBlackItemFB = getOrCreateBlackVideoItem(_session.footageFolder);
                         if (tBlackItemFB) {
                             try {
@@ -2903,9 +3297,9 @@ function cep_processSingleRow(rowJsonStr) {
                     if (tEnvFile && tEnvFile.exists) {
                         var tEnvFs = tEnvFile.fsName;
                         var tEnvMedia = _session.itemCache[tEnvFs];
-                        if (tEnvMedia === undefined) {
+                        if (!tEnvMedia) {
                             tEnvMedia = importAndGetProjectItem(tEnvFs);
-                            _session.itemCache[tEnvFs] = tEnvMedia;
+                            if (tEnvMedia) _session.itemCache[tEnvFs] = tEnvMedia;
                         }
                         if (tEnvMedia) {
                             try {
@@ -2967,28 +3361,14 @@ function cep_processSingleRow(rowJsonStr) {
                             } catch(etb) {}
                         }
                     }
-                    if (false) {
-                    var tBlackItem = getOrCreateBlackVideoItem(_session.footageFolder);
-                    if (tBlackItem) {
-                        try {
-                            tBlackItem.setInPoint("0", MEDIA_TYPE);
-                            tBlackItem.setOutPoint(Math.round(tClipDur * TICKS_PER_SECOND).toString(), MEDIA_TYPE);
-                            var resTB = insertAndRenameClip(tramTrack, tBlackItem, tramInsertPos, tramClipLabel, tClipDur, tramTimeInfo.mode !== "full");
-                            if (!resTB.error) {
-                                tramInserted++;
-                                tramInsertPos += (resTB.actualDur > 0 ? resTB.actualDur : tClipDur);
-                                actions.push("Tr\u00e1m V2 Black Envato (" + tClipDur.toFixed(1) + "s)");
-                            }
-                        } catch(etb) {}
-                    }
-                    }
                 } else {
                     var tExt = getExtensionFromUrl(tUrl);
                     var tLocalFileName = rowNumber + "_Tram" + tSubSuffix + "." + tExt;
-                    var tFolderFs = _session.footageFolder ? _session.footageFolder.fsName : (new File(app.project.path).parent.fsName);
-                    var tDownloadedFile = downloadFileFromUrl(tUrl, tFolderFs + "/" + tLocalFileName);
+                    var tDestPath = mediaDlDir + "/" + tLocalFileName;
+                    var tExistedBefore = (new File(tDestPath)).exists;
+                    var tDownloadedFile = downloadFileFromUrl(tUrl, tDestPath);
                     if (tDownloadedFile) {
-                        if (typeof ytTramExisted === "undefined" || !ytTramExisted) downloadsDone++;
+                        if (!tExistedBefore) downloadsDone++;
                         var tMediaItem = importAndGetProjectItem(tDownloadedFile.fsName);
                         if (tMediaItem) {
                             try {
@@ -2998,10 +3378,16 @@ function cep_processSingleRow(rowJsonStr) {
                                 if (!resTM.error) {
                                     tramInserted++;
                                     tramInsertPos += (resTM.actualDur > 0 ? resTM.actualDur : tClipDur);
-                                    actions.push("Trám V2 " + tLocalFileName + " (" + tClipDur.toFixed(1) + "s)");
+                                    actions.push("Trám V2 " + tDownloadedFile.name + " (" + tClipDur.toFixed(1) + "s)");
+                                } else {
+                                    warnings.push("Lỗi chèn trám: " + resTM.error);
                                 }
-                            } catch(etm) {}
+                            } catch(etm) { warnings.push("Lỗi chèn trám: " + etm.toString()); }
+                        } else {
+                            warnings.push("Import ảnh/video trám thất bại: " + tDownloadedFile.fsName);
                         }
+                    } else {
+                        warnings.push("Không tải được link trám: " + tUrl);
                     }
                 }
             }
@@ -3062,7 +3448,7 @@ function cep_processSingleRow(rowJsonStr) {
         else if (tramCodeRaw !== "" && tramTimeInfo !== null && !enableNas) {
             skippedTypes.push("File NAS Trám");
         } else if (tramCodeRaw !== "" && tramTimeInfo !== null) {
-            var tramSourceToUse = (tramSourceRaw !== "") ? tramSourceRaw : (_session.lastTramFolder !== "" ? _session.lastTramFolder : _session.lastSourceFolder);
+            var tramSourceToUse = (looksLikeFolderValue(tramSourceRaw) ? tramSourceRaw : "") || _session.lastTramFolder || _session.lastSourceFolder;
             var tramFileCodes = parseRowFileCodes(tramCodeRaw).fileCodes;
 
             for (var tfIdx = 0; tfIdx < tramFileCodes.length; tfIdx++) {
@@ -3082,9 +3468,9 @@ function cep_processSingleRow(rowJsonStr) {
                 if (v2TrimInfo && v2TrimInfo.filePath && (new File(v2TrimInfo.filePath)).exists) {
                     var trimFsV2 = v2TrimInfo.filePath;
                     activeTramItem = _session.itemCache[trimFsV2];
-                    if (activeTramItem === undefined) {
+                    if (!activeTramItem) {
                         activeTramItem = importAndGetProjectItem(trimFsV2);
-                        _session.itemCache[trimFsV2] = activeTramItem;
+                        if (activeTramItem) _session.itemCache[trimFsV2] = activeTramItem;
                     }
                     if (!activeTramItem) { warnings.push("Import file trám cắt gọn thất bại: " + trimFsV2); continue; }
                     tInSec = v2TrimInfo.localInSec;
@@ -3151,6 +3537,8 @@ function cep_processSingleRow(rowJsonStr) {
                 } catch(eTram) { warnings.push("Lỗi chèn trám: " + eTram.toString()); }
             }
         }
+    } else if (enableTram && !tramTrack && hasTramExplicit) {
+        warnings.push("Sequence chưa có Video Track V2 nên bỏ qua source trám dòng " + rowNumber + " (hãy thêm track V2 trên Timeline)");
     }
 
     var rowEndTimeV1 = (clipsInserted > 0) ? getTrackEndSeconds(mainTrack) : rowStartTime;
@@ -3161,7 +3549,7 @@ function cep_processSingleRow(rowJsonStr) {
     return toJson({
         status: (warnings.length > 0) ? "warning" : "success",
         rowNumber: rowNumber, details: actions.join(" | "),
-        clipCount: clipsInserted, tramCount: tramInserted,
+        clipCount: clipsInserted + tramInserted, tramCount: tramInserted,
         copyCount: copiesDone, downloadCount: downloadsDone, warnings: warnings
     });
 }

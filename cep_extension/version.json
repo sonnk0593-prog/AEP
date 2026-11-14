@@ -1,9 +1,9 @@
 {
-    "version":  "3.1.3",
+    "version":  "3.1.4",
     "notes":  [
-                  "Sửa triệt để lỗi tự dừng Copy \u0026 Relink khi gặp file nặng (\u003e1GB) do cờ cancelled của Sidecar",
-                  "Tối ưu cắt gọn (Smart Trim Copy) cho file máy quay Sony XAVC 4K 10-bit 4:2:2 (stream-copy tốc độ cao trong vài giây, không re-encode)",
-                  "Hỗ trợ nâng cấp OTA trực tiếp từ bản V2 lên V3 không cần cài đặt lại"
+                  "Tự động nhận diện \u0026 chèn link YouTube ở bất kỳ cột nào mà không cần chỉnh cột thủ công",
+                  "Sửa triệt để lỗi treo vô hạn ở bước import \u0026 cắt video YouTube khi tắt Copy về Footage/",
+                  "Hỗ trợ gộp ô (carry-forward) cho link YouTube và tự chuyển ảnh WebP sang PNG"
               ],
     "files":  [
                   {
@@ -24,11 +24,11 @@
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "d0811f2819e92a36e7963e52f327b2fa838a052bacd9643fff7e165d287a279c"
+                      "sha256":  "16d0f8ec488019c0b4c22588de64f58f268d0fe739e4e429de6ea81a6d3e26d3"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "90643ec1272b77035dd3d7829fe9248062eb12c9f52c798c24eaee19094df910"
+                      "sha256":  "2c5eacaf2cea8ab35d362f3cfe6fbe621322403433fba231097b8de2ccd5a920"
                   },
                   {
                       "path":  "backend/server.js",
