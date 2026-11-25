@@ -20,7 +20,7 @@ var csInterface = new CSInterface();
 // Badge trên header và tiêu đề Changelog đều lấy từ đây, không ghi tay trong HTML.
 // Định dạng: MAJOR.MINOR.PATCH - MAJOR = đổi dòng sản phẩm (V2 -> V3).
 // ============================================================================
-var APP_VERSION = "3.1.4";
+var APP_VERSION = "3.1.5";
 
 // Nhãn ngắn hiển thị trên badge: "2.0.0" -> "V2"
 function versionMajorLabel(v) { return "V" + String(v).split(".")[0]; }
@@ -3188,8 +3188,245 @@ function parseGoogleSheetUrl(url) {
         sheetId: sheetId,
         gid: gid,
         exportUrl: "https://docs.google.com/spreadsheets/d/" + sheetId + "/export?format=csv&gid=" + gid,
+        htmlembedUrl: "https://docs.google.com/spreadsheets/d/" + sheetId + "/htmlembed/sheet?gid=" + gid,
         gvizUrl: "https://docs.google.com/spreadsheets/d/" + sheetId + "/gviz/tq?tqx=out:csv&gid=" + gid
     };
+}
+
+function parseCsvGridClient(csvText) {
+    var text = String(csvText || "");
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    var rows = [], row = [], cur = "", inQuotes = false;
+    for (var i = 0; i < text.length; i++) {
+        var ch = text.charAt(i);
+        if (inQuotes) {
+            if (ch === '"') {
+                if (i + 1 < text.length && text.charAt(i + 1) === '"') {
+                    cur += '"';
+                    i++;
+                } else {
+                    inQuotes = false;
+                }
+            } else {
+                cur += ch;
+            }
+        } else {
+            if (ch === '"') {
+                inQuotes = true;
+            } else if (ch === ',') {
+                row.push(cur);
+                cur = "";
+            } else if (ch === '\r') {
+                if (i + 1 < text.length && text.charAt(i + 1) === '\n') i++;
+                row.push(cur);
+                rows.push(row);
+                row = [];
+                cur = "";
+            } else if (ch === '\n') {
+                row.push(cur);
+                rows.push(row);
+                row = [];
+                cur = "";
+            } else {
+                cur += ch;
+            }
+        }
+    }
+    row.push(cur);
+    if (row.length > 1 || row[0] !== "" || rows.length === 0) rows.push(row);
+    return rows;
+}
+
+function serializeCsvGridClient(rows) {
+    var out = [];
+    for (var r = 0; r < rows.length; r++) {
+        var cols = rows[r] || [];
+        var line = [];
+        for (var c = 0; c < cols.length; c++) {
+            var v = (cols[c] === undefined || cols[c] === null) ? "" : String(cols[c]);
+            if (v.indexOf('"') !== -1 || v.indexOf(',') !== -1 || v.indexOf('\n') !== -1 || v.indexOf('\r') !== -1) {
+                line.push('"' + v.replace(/"/g, '""') + '"');
+            } else {
+                line.push(v);
+            }
+        }
+        out.push(line.join(','));
+    }
+    return out.join('\n');
+}
+
+function unwrapGoogleRedirectUrl(href) {
+    if (!href) return "";
+    var u = String(href).trim();
+    if (/^https?:\/\/(?:www\.)?google\.[^/]+\/url\?/i.test(u)) {
+        try {
+            var parsedU = new URL(u);
+            var q = parsedU.searchParams.get("q") || parsedU.searchParams.get("url");
+            if (q && /^https?:\/\//i.test(q)) return q.trim();
+        } catch (eU) {
+            var mq = /[?&](?:q|url)=([^&]+)/i.exec(u);
+            if (mq) {
+                try {
+                    var dec = decodeURIComponent(mq[1]);
+                    if (/^https?:\/\//i.test(dec)) return dec.trim();
+                } catch (eD) {}
+            }
+        }
+    }
+    return /^https?:\/\//i.test(u) ? u : "";
+}
+
+/**
+ * Google Sheets export CSV sẽ cắt mất URL thật của Smart Chip YouTube / Hyperlink ẩn
+ * (chỉ còn tiêu đề chữ như "Breast cancer: Signs... - YouTube").
+ * Hàm này đọc bảng HTML từ /htmlembed/sheet?gid=..., ánh xạ chuẩn theo tọa độ (hàng, cột)
+ * có xử lý rowspan/colspan/freezebar, rồi ghép lại URL thật vào đúng ô CSV tương ứng.
+ */
+function enrichCsvWithHtmlHyperlinks(csvText, htmlText) {
+    var result = { csvText: csvText, injectedCount: 0, youtubeCount: 0 };
+    if (!csvText || !htmlText || htmlText.indexOf("href=") === -1) return result;
+    if (typeof DOMParser === "undefined") return result;
+
+    try {
+        var doc = new DOMParser().parseFromString(htmlText, "text/html");
+        var tbody = doc.querySelector("table tbody") || doc.querySelector("tbody");
+        if (!tbody) return result;
+
+        var trList = tbody.querySelectorAll("tr");
+        if (!trList || trList.length === 0) return result;
+
+        var occ = {};
+        var linkMap = []; // { r, c, links: [{ url, text, isChip }] }
+        var seqRow = 0;
+
+        for (var ti = 0; ti < trList.length; ti++) {
+            var tr = trList[ti];
+            var tds = tr.querySelectorAll("td");
+            if (!tds || tds.length === 0) continue;
+
+            // Bỏ qua hàng freezebar ảo của Google Sheets
+            var hasRealTd = false;
+            for (var chk = 0; chk < tds.length; chk++) {
+                if ((tds[chk].className || "").indexOf("freezebar") === -1) { hasRealTd = true; break; }
+            }
+            if (!hasRealTd) continue;
+
+            var rowIdx = seqRow;
+            var th = tr.querySelector("th");
+            if (th) {
+                var rowNum = parseInt(String(th.textContent || "").trim(), 10);
+                if (!isNaN(rowNum) && rowNum >= 1) {
+                    rowIdx = rowNum - 1;
+                    seqRow = rowIdx;
+                }
+            }
+            seqRow++;
+
+            if (!occ[rowIdx]) occ[rowIdx] = {};
+            var colIdx = 0;
+
+            for (var di = 0; di < tds.length; di++) {
+                var td = tds[di];
+                if ((td.className || "").indexOf("freezebar") !== -1) continue;
+
+                while (occ[rowIdx][colIdx]) colIdx++;
+
+                var rs = parseInt(td.getAttribute("rowspan") || "1", 10);
+                var cs = parseInt(td.getAttribute("colspan") || "1", 10);
+                if (isNaN(rs) || rs < 1) rs = 1;
+                if (isNaN(cs) || cs < 1) cs = 1;
+
+                for (var dr = 0; dr < rs; dr++) {
+                    if (!occ[rowIdx + dr]) occ[rowIdx + dr] = {};
+                    for (var dc = 0; dc < cs; dc++) {
+                        occ[rowIdx + dr][colIdx + dc] = true;
+                    }
+                }
+
+                var anchors = td.querySelectorAll("a[href]");
+                if (anchors && anchors.length > 0) {
+                    var cellLinks = [];
+                    var seenCellUrl = {};
+                    for (var ai = 0; ai < anchors.length; ai++) {
+                        var a = anchors[ai];
+                        var realUrl = unwrapGoogleRedirectUrl(a.getAttribute("href") || "");
+                        if (!realUrl || seenCellUrl[realUrl]) continue;
+                        seenCellUrl[realUrl] = true;
+                        var aText = String(a.textContent || "").replace(/\s+/g, " ").trim();
+                        var isChip = !!(a.querySelector("svg") || (a.parentElement && (a.parentElement.getAttribute("style") || "").indexOf("background-color") !== -1));
+                        cellLinks.push({ url: realUrl, text: aText, isChip: isChip });
+                    }
+                    if (cellLinks.length > 0) {
+                        linkMap.push({ r: rowIdx, c: colIdx, links: cellLinks });
+                    }
+                }
+
+                colIdx += cs;
+            }
+        }
+
+        if (linkMap.length === 0) return result;
+
+        var grid = parseCsvGridClient(csvText);
+        var modified = false;
+
+        for (var li = 0; li < linkMap.length; li++) {
+            var entry = linkMap[li];
+            if (entry.r < 0 || entry.r >= grid.length) continue;
+            var rowArr = grid[entry.r];
+            while (rowArr.length <= entry.c) rowArr.push("");
+
+            var cellVal = String(rowArr[entry.c] || "");
+            var changedCell = false;
+
+            for (var k = 0; k < entry.links.length; k++) {
+                var lnk = entry.links[k];
+                var url = lnk.url;
+                if (cellVal.toLowerCase().indexOf(url.toLowerCase()) !== -1) continue;
+
+                var isYtOrEnv = /(?:youtube\.com|youtu\.be|envato\.com)/i.test(url);
+                var normCell = cellVal.replace(/\s+/g, " ").trim();
+                var aText = lnk.text;
+
+                if (aText && normCell === aText) {
+                    // Cả ô chỉ là 1 Smart Chip / Hyperlink -> thay hẳn bằng URL thật
+                    cellVal = url;
+                } else if (aText && aText.length >= 3 && cellVal.indexOf(aText) !== -1 && (lnk.isChip || isYtOrEnv)) {
+                    // Smart Chip hoặc link YouTube/Envato nằm chung với ghi chú/timecode -> thay đúng tiêu đề chip bằng URL thật
+                    cellVal = cellVal.replace(aText, url);
+                } else {
+                    // Khác khoảng trắng/xuống dòng: thử so khớp tiêu đề đã chuẩn hoá hoặc nối URL xuống dòng mới
+                    cellVal = cellVal ? (cellVal + "\n" + url) : url;
+                }
+
+                changedCell = true;
+                result.injectedCount++;
+                if (/(?:youtube\.com|youtu\.be)/i.test(url)) result.youtubeCount++;
+            }
+
+            if (changedCell) {
+                rowArr[entry.c] = cellVal;
+                modified = true;
+            }
+        }
+
+        if (modified) {
+            result.csvText = serializeCsvGridClient(grid);
+        }
+    } catch (eEnrich) {}
+
+    return result;
+}
+
+function fetchOptionalSheetHtml(htmlembedUrl) {
+    if (!htmlembedUrl || typeof fetch === "undefined") return Promise.resolve("");
+    var timerPromise = new Promise(function (resolve) {
+        setTimeout(function () { resolve(""); }, 10000);
+    });
+    var fetchPromise = fetch(htmlembedUrl, { cache: "no-store" })
+        .then(function (res) { return res.ok ? res.text() : ""; })
+        .catch(function () { return ""; });
+    return Promise.race([fetchPromise, timerPromise]);
 }
 
 function handleStartClick() {
@@ -3254,15 +3491,30 @@ function startFromSheetUrl() {
 
     addLog("info", "Đang kết nối Google Sheet (ID: " + parsed.sheetId.substring(0, 8) + "..., Tab gid=" + parsed.gid + ")...");
 
-    // Tải trực tiếp qua fetch()
+    // Tải song song CSV và HTML embed (để lấy trọn vẹn link ẩn của Smart Chip YouTube / Hyperlink)
+    var htmlPromise = fetchOptionalSheetHtml(parsed.htmlembedUrl);
     fetch(parsed.exportUrl, { cache: "no-store" })
         .then(function (res) {
             if (!res.ok) throw new Error("HTTP " + res.status);
             return res.text();
         })
         .then(function (csvText) {
+            return htmlPromise.then(function (htmlText) {
+                return { csvText: csvText, htmlText: htmlText };
+            });
+        })
+        .then(function (bundle) {
             if (state.checkCancelled) return;
-            processDownloadedCsv(csvText, parsed);
+            var finalCsv = bundle.csvText;
+            if (bundle.htmlText) {
+                var enriched = enrichCsvWithHtmlHyperlinks(bundle.csvText, bundle.htmlText);
+                finalCsv = enriched.csvText;
+                if (enriched.injectedCount > 0) {
+                    addLog("info", "🔗 Đã tự động trích xuất " + enriched.injectedCount + " link ẩn (Smart Chip / Hyperlink" +
+                        (enriched.youtubeCount > 0 ? (", gồm " + enriched.youtubeCount + " link YouTube") : "") + ") từ Google Sheet.");
+                }
+            }
+            processDownloadedCsv(finalCsv, parsed);
         })
         .catch(function (err) {
             if (state.checkCancelled) return;
@@ -3282,7 +3534,18 @@ function startFromSheetUrl() {
                     var res = JSON.parse(resStr);
                     if (res.success && res.csvContent) {
                         if (state.checkCancelled) return;
-                        processDownloadedCsv(res.csvContent, parsed);
+                        htmlPromise.then(function (htmlText) {
+                            if (state.checkCancelled) return;
+                            var finalCsv = res.csvContent;
+                            if (htmlText) {
+                                var enriched = enrichCsvWithHtmlHyperlinks(res.csvContent, htmlText);
+                                finalCsv = enriched.csvText;
+                                if (enriched.injectedCount > 0) {
+                                    addLog("info", "🔗 Đã tự động trích xuất " + enriched.injectedCount + " link ẩn (Smart Chip / Hyperlink) từ Google Sheet.");
+                                }
+                            }
+                            processDownloadedCsv(finalCsv, parsed);
+                        });
                     } else {
                         showGSheetPermissionError();
                     }

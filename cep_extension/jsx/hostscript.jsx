@@ -22,7 +22,7 @@
 // ghi de ham cua panel nap truoc. Panel doi chieu bien nay de biet script dang
 // chay co dung cua no khong.
 // ============================================================================
-var IMPORTCUT_VERSION = "3.1.4";
+var IMPORTCUT_VERSION = "3.1.5";
 
 var TICKS_PER_SECOND = 254016000000;
 var MEDIA_TYPE = 4;
@@ -589,9 +589,9 @@ function detectColumns(rows) {
 // ---- URL Helpers ----
 function extractUrls(text) {
     if (!text) return [];
-    var urls = [], regex = /(https?:\/\/[^\s\r\n",<>]+)/gi, match;
-    while ((match = regex.exec(text)) !== null) {
-        var u = trim(match[1]);
+    var urls = [], seen = {}, match;
+    function pushClean(rawUrl) {
+        var u = trim(rawUrl);
         // Loại bỏ các dấu câu, ngoặc, nháy dính ở đuôi URL (ví dụ ghi chú "link (lấy từ...)" hoặc "link,")
         u = u.replace(/[.,;:!?)\"'>\]]+$/, "");
         // Nếu có chữ tiếng Việt dính liền vào đuôi link mà không có dấu cách (ký tự unicode > 127)
@@ -602,7 +602,22 @@ function extractUrls(text) {
         if (firstNonAscii !== -1) {
             u = u.substring(0, firstNonAscii).replace(/[.,;:!?)\"'>\]]+$/, "");
         }
-        if (u !== "") urls.push(u);
+        if (u !== "" && !seen[u]) {
+            seen[u] = true;
+            urls.push(u);
+        }
+    }
+    var regex = /(https?:\/\/[^\s\r\n",<>]+)/gi;
+    while ((match = regex.exec(text)) !== null) {
+        pushClean(match[1]);
+    }
+    // Ho tro ca link YouTube / Envato dan thieu "https://" (vd: youtube.com/watch?v=... hoac youtu.be/...)
+    var bareRegex = /(?:^|[\s(\["'])((?:www\.|m\.|music\.)?youtube\.com\/[^\s\r\n",<>]+|youtu\.be\/[^\s\r\n",<>]+|(?:app\.|elements\.)?envato\.com\/[^\s\r\n",<>]+)/gi;
+    while ((match = bareRegex.exec(text)) !== null) {
+        var bare = trim(match[1]);
+        if (bare !== "" && !/^https?:\/\//i.test(bare)) {
+            pushClean("https://" + bare);
+        }
     }
     return urls;
 }
@@ -1687,17 +1702,19 @@ function collectRowUrlsUniversal(rawRow, cols, sourceVal, codeVal, tramSourceVal
         for (var c = 0; c < rawRow.length; c++) {
             if (c === sCol || c === kCol || c === tsCol || c === tkCol) continue;
             var cellStr = trim(rawRow[c] || "");
-            if (cellStr === "" || cellStr.indexOf("http") === -1) continue;
+            if (cellStr === "") continue;
+            var cellLow = cellStr.toLowerCase();
+            if (cellLow.indexOf("http") === -1 && cellLow.indexOf("youtu") === -1 && cellLow.indexOf("envato") === -1) continue;
             var extraUrls = extractUrls(cellStr);
             for (i = 0; i < extraUrls.length; i++) {
                 var eu = extraUrls[i];
                 if (seen[eu]) continue;
                 if (!isYouTubeUrl(eu) && !isEnvatoUrl(eu)) continue;
                 var routeToTram = false;
-                if (enableTram !== false) {
-                    if (tramStartCol !== -1 && c >= tramStartCol) {
-                        routeToTram = true;
-                    } else if (hasLocalV1OnRow && v1Urls.length === 0) {
+                // Chi dua sang V2 Tram khi dong nay THUC SU da co source V1 (local hoac URL V1).
+                // Neu V1 dang trong -> dua thang len V1 de tai & cat luon, KHONG bao loi "Thieu Source hoac ma file"!
+                if (enableTram !== false && (hasLocalV1OnRow || v1Urls.length > 0)) {
+                    if ((tramStartCol !== -1 && c >= tramStartCol) || (hasLocalV1OnRow && v1Urls.length === 0)) {
                         routeToTram = true;
                     }
                 }
@@ -1765,6 +1782,16 @@ function cep_validateSources(payloadJson) {
                 v1Urls = lastV1Urls;
             }
 
+            var v1HasUsableLocalVal = isFolderOnlyV1 || (lastCode !== "" && (lastFolder !== "" || isFullFilePath(lastCode)));
+            if (v1Urls.length === 0 && tramUrls.length > 0 && (code !== "" || time !== "") && !v1HasUsableLocalVal) {
+                v1Urls = tramUrls.slice(0);
+                tramUrls = [];
+                if (!hasNewLocalCodeV1) {
+                    lastV1Urls = v1Urls;
+                    lastCode = "";
+                }
+            }
+
             if (isFolderOnlyV1) {
                 var fObj = new Folder(stripQuotes(source));
                 var checkKey = sourceCheckKey(source, "[Folder]");
@@ -1789,7 +1816,11 @@ function cep_validateSources(payloadJson) {
                     validateSourceUrls(out.items, r + 1, "V1", v1Urls.join("\n"), 1);
                 }
                 var codes = (v1Urls.length > 0 && !hasNewLocalCodeV1) ? [] : (isFullFilePath(lastCode) ? [lastCode] : lastCode.split(/[\r\n,;]+/));
-                for (var c = 0; c < codes.length; c++) validateOneSource(out.items, r + 1, "V1", lastFolder, codes[c], c + 1);
+                for (var c = 0; c < codes.length; c++) {
+                    var vcItem = stripQuotes(codes[c]);
+                    if (v1Urls.length > 0 && !isFullFilePath(vcItem) && !looksLikeCode(vcItem)) continue;
+                    validateOneSource(out.items, r + 1, "V1", lastFolder, codes[c], c + 1);
+                }
             }
 
             var isFolderOnlyV2 = (payload.enableTram !== false && tramCode === "" && tramUrls.length === 0 && isFolderPath(tramSource));
@@ -2602,11 +2633,38 @@ function cep_processSingleRow(rowJsonStr) {
     var isFolderOnlyV2 = (tramCodeRaw === "" && tramUrls.length === 0 && isFolderPath(tramSourceRaw));
     var hasTramExplicit = (tramUrls.length > 0) || (tramCodeRaw !== "") || isFolderOnlyV2;
 
-    // Neu Sequence chi co 1 track V1 (chua co V2) ma dong chi co URL tram (khong co V1), dua URL tram xuong V1 de khong bi bo sot
-    if (enableTram && !tramTrack && !hasExplicitV1 && mainUrls.length === 0 && !isFolderOnlyV1 && tramUrls.length > 0) {
-        mainUrls = tramUrls.slice(0);
-        tramUrls = [];
-        hasTramExplicit = false;
+    // Neu V1 khong co source local hop le (neu de nguyen se bao loi "Thieu Source hoac ma file"),
+    // nhung dong nay co link YouTube/Envato o cot tram (hoac Sequence chi co 1 track V1)
+    // -> tu dong dua link do len V1 de tai & cat luon tuong tu Envato!
+    var v1HasUsableLocal = isFolderOnlyV1 || (_session.lastFileCode !== "" && (_session.lastSourceFolder !== "" || parseRowFileCodes(_session.lastFileCode).anyFullPath));
+    if (mainUrls.length === 0 && tramUrls.length > 0) {
+        if ((enableTram && !tramTrack && !hasExplicitV1 && !isFolderOnlyV1) ||
+            (hasExplicitV1 && !v1HasUsableLocal)) {
+            mainUrls = tramUrls.slice(0);
+            tramUrls = [];
+            hasTramExplicit = (tramCodeRaw !== "" || isFolderOnlyV2);
+            if (mainUrls.length > 0 && !hasNewLocalCodeV1) {
+                _session.lastV1Urls = mainUrls.slice(0);
+                _session.lastFileCode = "";
+            }
+        }
+    }
+
+    // Neu link YouTube/Envato nam o cot tu do va mang kem timecode trong cung o (khi cot Time de trong)
+    if (mainUrls.length > 0 && (timeRaw === "" || (allTimeRanges && allTimeRanges.length === 1 && allTimeRanges[0].mode === "auto")) && effectiveRawRow && effectiveRawRow.length) {
+        for (var tcScan = 0; tcScan < effectiveRawRow.length; tcScan++) {
+            var rawCellT = trim(effectiveRawRow[tcScan] || "");
+            if (rawCellT === "" || extractUrls(rawCellT).length === 0) continue;
+            var cellTimeSplit = splitCodeAndTimecode(rawCellT);
+            if (cellTimeSplit.embeddedTime !== "") {
+                var parsedEmb = parseAllTimeRanges(cellTimeSplit.embeddedTime);
+                if (parsedEmb && parsedEmb.length > 0 && parsedEmb[0].mode !== "auto") {
+                    timeRaw = cellTimeSplit.embeddedTime;
+                    allTimeRanges = parsedEmb;
+                    break;
+                }
+            }
+        }
     }
 
     var mediaDlDir = getMediaDownloadDirFs();

@@ -1,9 +1,8 @@
 {
-    "version":  "3.1.4",
+    "version":  "3.1.5",
     "notes":  [
-                  "Tự động nhận diện \u0026 chèn link YouTube ở bất kỳ cột nào mà không cần chỉnh cột thủ công",
-                  "Sửa triệt để lỗi treo vô hạn ở bước import \u0026 cắt video YouTube khi tắt Copy về Footage/",
-                  "Hỗ trợ gộp ô (carry-forward) cho link YouTube và tự chuyển ảnh WebP sang PNG"
+                  "Tự động trích xuất link thật từ Google Sheets Smart Chip YouTube \u0026 Hyperlink ẩn (không còn lỗi Thiếu Source hoặc mã file)",
+                  "Phát hiện link YouTube (kể cả link thiếu https://) ở bất kỳ cột nào trên dòng sẽ tự động tải \u0026 cắt tương tự Envato"
               ],
     "files":  [
                   {
@@ -24,11 +23,11 @@
                   },
                   {
                       "path":  "js/app.js",
-                      "sha256":  "16d0f8ec488019c0b4c22588de64f58f268d0fe739e4e429de6ea81a6d3e26d3"
+                      "sha256":  "61279cc9b07d7df1d0f502d011d4af8ed762c4d14069066f66602a614420f80e"
                   },
                   {
                       "path":  "jsx/hostscript.jsx",
-                      "sha256":  "2c5eacaf2cea8ab35d362f3cfe6fbe621322403433fba231097b8de2ccd5a920"
+                      "sha256":  "eaa8e10fd4f08d1c7d0a45edd1a158ae9c1db5ed4bf9a11a185c51188b1f4586"
                   },
                   {
                       "path":  "backend/server.js",
